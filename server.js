@@ -39,13 +39,19 @@ function safeEqual(a, b) {
   return mismatch === 0;
 }
 
+// Accepts the key either as a header (x-manufact-key) or as a URL path
+// segment (/mcp/<key>) — the latter exists because some MCP clients (e.g.
+// the Claude apps) don't expose a way to set custom headers on a connector.
 function requireMcpKey(req, res, next) {
   if (!MCP_SHARED_KEY) return next(); // auth disabled: no key configured
-  const provided = req.get("x-manufact-key");
-  if (provided && safeEqual(provided, MCP_SHARED_KEY)) return next();
+  const headerKey = req.get("x-manufact-key");
+  const pathKey   = req.params.key;
+  if ((headerKey && safeEqual(headerKey, MCP_SHARED_KEY)) || (pathKey && safeEqual(pathKey, MCP_SHARED_KEY))) {
+    return next();
+  }
   res.status(401).json({
     jsonrpc: "2.0",
-    error: { code: -32001, message: "Unauthorized: missing or invalid x-manufact-key header" },
+    error: { code: -32001, message: "Unauthorized: missing or invalid MCP key" },
     id: null,
   });
 }
@@ -68,7 +74,7 @@ app.get("/", (_req, res) => {
 
 app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
 
-app.post("/mcp", requireMcpKey, async (req, res) => {
+async function handleMcp(req, res) {
   try {
     const server    = buildServer();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -81,7 +87,17 @@ app.post("/mcp", requireMcpKey, async (req, res) => {
       res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal server error" }, id: null });
     }
   }
-});
+}
+
+// Legacy path: open unless MCP_SHARED_KEY is unset, in which case auth is
+// disabled entirely (back-compat). Prefer the keyed path below once a key
+// is configured, since most MCP clients can't add custom headers.
+app.post("/mcp", requireMcpKey, handleMcp);
+
+// Keyed path for clients that can't set custom headers (e.g. Claude apps):
+// the secret travels as a URL path segment instead.
+//   https://<host>/mcp/<MCP_SHARED_KEY>
+app.post("/mcp/:key", requireMcpKey, handleMcp);
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
