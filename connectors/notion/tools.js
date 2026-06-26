@@ -1,0 +1,114 @@
+// ---------------------------------------------------------------------------
+// connectors/notion/tools.js
+// ---------------------------------------------------------------------------
+
+import { z } from "zod";
+import { notionRequest, notionPageTitle, notionRichTextToString, notionBlocksToText } from "./client.js";
+
+export function register(server) {
+
+  server.tool(
+    "notion_search",
+    "Search pages and databases in your Notion workspace.",
+    {
+      query:       z.string().describe("Search query string"),
+      filter_type: z.enum(["page", "database"]).optional().describe("Filter results to only pages or only databases (default: both)"),
+      page_size:   z.number().optional().describe("Number of results to return (default: 10, max: 100)"),
+    },
+    async ({ query, filter_type, page_size = 10 }) => {
+      const body = { query, page_size };
+      if (filter_type) body.filter = { value: filter_type, property: "object" };
+      const data = await notionRequest("/search", { method: "POST", body });
+      if (!data.results?.length) return { content: [{ type: "text", text: "No results found." }] };
+      const lines = data.results.map((r) => {
+        const title = r.object === "page"
+          ? notionPageTitle(r)
+          : (notionRichTextToString(r.title) || "(untitled)");
+        return `[${r.object}] ${title}\n  ID: ${r.id}\n  URL: ${r.url || ""}`;
+      });
+      return { content: [{ type: "text", text: lines.join("\n\n") }] };
+    }
+  );
+
+  server.tool(
+    "notion_get_page",
+    "Get a Notion page's properties and content blocks.",
+    {
+      page_id: z.string().describe("Notion page ID (UUID format, e.g. from notion_search)"),
+    },
+    async ({ page_id }) => {
+      const [page, blocksData] = await Promise.all([
+        notionRequest(`/pages/${page_id}`),
+        notionRequest(`/blocks/${page_id}/children?page_size=100`),
+      ]);
+      const title   = notionPageTitle(page);
+      const content = notionBlocksToText(blocksData.results || []);
+      const hasMore = blocksData.has_more ? "\n\n⚠️ Page has more blocks — only first 100 shown." : "";
+      const text =
+        `# ${title}\n` +
+        `ID: ${page.id}\n` +
+        `URL: ${page.url}\n` +
+        `Created: ${page.created_time?.slice(0, 10)} | Last edited: ${page.last_edited_time?.slice(0, 10)}\n\n` +
+        (content || "(no content)") + hasMore;
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  server.tool(
+    "notion_create_page",
+    "Create a new Notion page inside a parent page or database.",
+    {
+      parent_id:   z.string().describe("ID of the parent page or database"),
+      parent_type: z.enum(["page", "database"]).describe("Whether the parent is a page or a database"),
+      title:       z.string().describe("Title of the new page"),
+      content:     z.string().optional().describe("Plain text content to add as paragraph blocks"),
+    },
+    async ({ parent_id, parent_type, title, content }) => {
+      const parent     = parent_type === "database" ? { database_id: parent_id } : { page_id: parent_id };
+      const properties = parent_type === "database"
+        ? { Name:  { title: [{ text: { content: title } }] } }
+        : { title: { title: [{ text: { content: title } }] } };
+      const children = content
+        ? content.split("\n").filter(Boolean).map((line) => ({
+            object: "block", type: "paragraph",
+            paragraph: { rich_text: [{ type: "text", text: { content: line } }] },
+          }))
+        : [];
+      const data = await notionRequest("/pages", {
+        method: "POST",
+        body: { parent, properties, children },
+      });
+      return { content: [{ type: "text", text: `Created Notion page "${title}"\nID: ${data.id}\nURL: ${data.url}` }] };
+    }
+  );
+
+  server.tool(
+    "notion_update_page",
+    "Update a Notion page's title or properties, or append text content to it.",
+    {
+      page_id:        z.string().describe("Notion page ID to update"),
+      title:          z.string().optional().describe("New title for the page"),
+      append_content: z.string().optional().describe("Plain text to append as new paragraph blocks"),
+      archived:       z.boolean().optional().describe("Set true to archive (trash) the page, false to restore"),
+    },
+    async ({ page_id, title, append_content, archived }) => {
+      const results = [];
+      if (title !== undefined || archived !== undefined) {
+        const body = {};
+        if (archived !== undefined) body.archived = archived;
+        if (title    !== undefined) body.properties = { title: { title: [{ text: { content: title } }] } };
+        const data = await notionRequest(`/pages/${page_id}`, { method: "PATCH", body });
+        results.push(`Updated page "${notionPageTitle(data)}" (ID: ${data.id}).`);
+      }
+      if (append_content) {
+        const children = append_content.split("\n").filter(Boolean).map((line) => ({
+          object: "block", type: "paragraph",
+          paragraph: { rich_text: [{ type: "text", text: { content: line } }] },
+        }));
+        await notionRequest(`/blocks/${page_id}/children`, { method: "PATCH", body: { children } });
+        results.push(`Appended ${children.length} paragraph(s) to page.`);
+      }
+      return { content: [{ type: "text", text: results.join("\n") || "No changes made." }] };
+    }
+  );
+}
