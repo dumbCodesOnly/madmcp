@@ -1,7 +1,7 @@
 {
-  "name": "notes-mcp-server",
+  "name": "github-mcp-server",
   "version": "1.0.0",
-  "description": "A simple MCP server for managing notes and todos, deployable on Manufact Cloud.",
+  "description": "MCP server with tools for reading/writing files in GitHub repos, deployable on Manufact Cloud.",
   "main": "server.js",
   "type": "module",
   "scripts": {
