@@ -145,13 +145,9 @@ function buildServer() {
       message: z.string().describe("Commit message"),
       branch: z.string().optional().describe("Branch to commit to (default: repo's default branch)"),
     },
-<<<<<<< HEAD
-    async ({ owner, repo, path, content, message, branch }) => {
-=======
     async ({ owner = DEFAULT_OWNER, repo, path, content, message, branch }) => {
       // Need the current file SHA if it already exists, otherwise GitHub
       // will reject the update as a conflict.
->>>>>>> ab38864 (feat: support default repo owner and add push_files tool)
       let sha;
       try {
         const query = branch ? `?ref=${encodeURIComponent(branch)}` : "";
