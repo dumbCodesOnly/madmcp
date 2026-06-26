@@ -28,7 +28,6 @@ export function register(server) {
       page:    z.number().optional().describe("Page number for pagination (default: 1)"),
     },
     async ({ user_id = MEM0_USER_ID, limit = 20, page = 1 }) => {
-      // POST /v3/memories/ with filters
       const data = await mem0Request("/v3/memories/", {
         method: "POST",
         body: { filters: { user_id }, page, page_size: limit },
@@ -74,7 +73,6 @@ export function register(server) {
         method: "POST",
         body: { messages, user_id },
       });
-      // v3/memories/add returns an event_id for async processing
       const eventId = data.event_id || data.id;
       return {
         content: [{
@@ -122,7 +120,7 @@ export function register(server) {
     async ({ memory_id, content }) => {
       const data = await mem0Request(`/v1/memories/${memory_id}/`, {
         method: "PUT",
-        body: { memory: content },
+        body: { text: content },
       });
       return { content: [{ type: "text", text: `Updated memory (ID: ${data.id || memory_id}).\nUpdated: ${data.updated_at?.slice(0, 10) || "unknown"}` }] };
     }
