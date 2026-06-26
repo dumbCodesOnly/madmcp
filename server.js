@@ -11,9 +11,19 @@ import { z } from "zod";
 // via `env` on deploy/update_server). It should be a GitHub Personal Access
 // Token scoped to only the repos you want this server to touch. Never commit
 // the token to the repo itself.
+//
+// NOTION_TOKEN  — Notion integration token (starts with "secret_")
+// MEM_API_KEY   — Mem API key
 // ---------------------------------------------------------------------------
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GITHUB_API = "https://api.github.com";
+
+const NOTION_TOKEN = process.env.NOTION_TOKEN;
+const NOTION_API = "https://api.notion.com/v1";
+const NOTION_VERSION = "2022-06-28";
+
+const MEM_API_KEY = process.env.MEM_API_KEY;
+const MEM_API = "https://api.mem.ai/v0";
 
 // Default repo owner to use when a tool call omits `owner`. Set via env var
 // on the Manufact server, or hardcode a fallback string below.
@@ -57,6 +67,101 @@ async function githubRequest(path, { method = "GET", body, accept } = {}) {
   return data;
 }
 
+// ---------------------------------------------------------------------------
+// Notion helpers
+// ---------------------------------------------------------------------------
+async function notionRequest(path, { method = "GET", body } = {}) {
+  if (!NOTION_TOKEN) {
+    throw new Error("NOTION_TOKEN is not set. Add it as an environment variable on the Manufact server.");
+  }
+  const res = await fetch(`${NOTION_API}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${NOTION_TOKEN}`,
+      "Notion-Version": NOTION_VERSION,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  if (!res.ok) {
+    const message = (data && (data.message || JSON.stringify(data))) || res.statusText;
+    throw new Error(`Notion API error (${res.status}): ${message}`);
+  }
+  return data;
+}
+
+// Extract plain text from Notion rich_text arrays
+function notionRichTextToString(richText = []) {
+  return richText.map((t) => t.plain_text || "").join("");
+}
+
+// Extract page title from Notion page object
+function notionPageTitle(page) {
+  const titleProp = Object.values(page.properties || {}).find(
+    (p) => p.type === "title"
+  );
+  return titleProp ? notionRichTextToString(titleProp.title) : "(untitled)";
+}
+
+// Flatten Notion blocks to readable text (one level deep)
+function notionBlocksToText(blocks = []) {
+  return blocks
+    .map((b) => {
+      const type = b.type;
+      const block = b[type];
+      if (!block) return "";
+      const text = notionRichTextToString(block.rich_text || []);
+      if (type === "heading_1") return `# ${text}`;
+      if (type === "heading_2") return `## ${text}`;
+      if (type === "heading_3") return `### ${text}`;
+      if (type === "bulleted_list_item") return `• ${text}`;
+      if (type === "numbered_list_item") return `1. ${text}`;
+      if (type === "to_do") return `[${block.checked ? "x" : " "}] ${text}`;
+      if (type === "code") return `\`\`\`${block.language || ""}\n${text}\n\`\`\``;
+      if (type === "divider") return "---";
+      if (type === "paragraph") return text;
+      return text;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Mem helpers
+// ---------------------------------------------------------------------------
+async function memRequest(path, { method = "GET", body } = {}) {
+  if (!MEM_API_KEY) {
+    throw new Error("MEM_API_KEY is not set. Add it as an environment variable on the Manufact server.");
+  }
+  const res = await fetch(`${MEM_API}${path}`, {
+    method,
+    headers: {
+      Authorization: `ApiAccessToken ${MEM_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  if (!res.ok) {
+    const message = (data && (data.message || data.error || JSON.stringify(data))) || res.statusText;
+    throw new Error(`Mem API error (${res.status}): ${message}`);
+  }
+  return data;
+}
+
 function toBase64(str) {
   return Buffer.from(str, "utf-8").toString("base64");
 }
@@ -70,8 +175,8 @@ function fromBase64(b64) {
 // ---------------------------------------------------------------------------
 function buildServer() {
   const server = new McpServer({
-    name: "github-mcp-server",
-    version: "1.0.0",
+    name: "manufact-mcp-server",
+    version: "1.1.0",
   });
 
   // -------------------------------------------------------------------------
@@ -921,10 +1026,7 @@ function buildServer() {
       run_id: z.number().describe("Workflow run ID (from list_workflow_runs)"),
     },
     async ({ owner = DEFAULT_OWNER, repo, run_id }) => {
-      // Fetch run details
       const run = await githubRequest(`/repos/${owner}/${repo}/actions/runs/${run_id}`);
-
-      // Fetch jobs for this run
       const jobsData = await githubRequest(`/repos/${owner}/${repo}/actions/runs/${run_id}/jobs`);
       const jobs = jobsData.jobs || [];
 
@@ -958,6 +1060,266 @@ function buildServer() {
     }
   );
 
+  // -------------------------------------------------------------------------
+  // Notion tools
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "notion_search",
+    "Search pages and databases in your Notion workspace.",
+    {
+      query: z.string().describe("Search query string"),
+      filter_type: z.enum(["page", "database"]).optional().describe("Filter results to only pages or only databases (default: both)"),
+      page_size: z.number().optional().describe("Number of results to return (default: 10, max: 100)"),
+    },
+    async ({ query, filter_type, page_size = 10 }) => {
+      const body = { query, page_size };
+      if (filter_type) {
+        body.filter = { value: filter_type, property: "object" };
+      }
+      const data = await notionRequest("/search", { method: "POST", body });
+      if (!data.results?.length) {
+        return { content: [{ type: "text", text: "No results found." }] };
+      }
+      const lines = data.results.map((r) => {
+        const title = r.object === "page" ? notionPageTitle(r) : (notionRichTextToString(r.title) || "(untitled)");
+        const url = r.url || "";
+        return `[${r.object}] ${title}\n  ID: ${r.id}\n  URL: ${url}`;
+      });
+      return { content: [{ type: "text", text: lines.join("\n\n") }] };
+    }
+  );
+
+  server.tool(
+    "notion_get_page",
+    "Get a Notion page's properties and content blocks.",
+    {
+      page_id: z.string().describe("Notion page ID (UUID format, e.g. from notion_search)"),
+    },
+    async ({ page_id }) => {
+      const [page, blocksData] = await Promise.all([
+        notionRequest(`/pages/${page_id}`),
+        notionRequest(`/blocks/${page_id}/children?page_size=100`),
+      ]);
+
+      const title = notionPageTitle(page);
+      const content = notionBlocksToText(blocksData.results || []);
+      const hasMore = blocksData.has_more ? "\n\n⚠️ Page has more blocks — only first 100 shown." : "";
+
+      const text =
+        `# ${title}\n` +
+        `ID: ${page.id}\n` +
+        `URL: ${page.url}\n` +
+        `Created: ${page.created_time?.slice(0, 10)} | Last edited: ${page.last_edited_time?.slice(0, 10)}\n\n` +
+        (content || "(no content)") +
+        hasMore;
+
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  server.tool(
+    "notion_create_page",
+    "Create a new Notion page inside a parent page or database.",
+    {
+      parent_id: z.string().describe("ID of the parent page or database to create the page in"),
+      parent_type: z.enum(["page", "database"]).describe("Whether the parent is a page or a database"),
+      title: z.string().describe("Title of the new page"),
+      content: z.string().optional().describe("Plain text content to add as paragraph blocks"),
+    },
+    async ({ parent_id, parent_type, title, content }) => {
+      const parent =
+        parent_type === "database"
+          ? { database_id: parent_id }
+          : { page_id: parent_id };
+
+      const properties =
+        parent_type === "database"
+          ? { Name: { title: [{ text: { content: title } }] } }
+          : { title: { title: [{ text: { content: title } }] } };
+
+      const children = content
+        ? content.split("\n").filter(Boolean).map((line) => ({
+            object: "block",
+            type: "paragraph",
+            paragraph: { rich_text: [{ type: "text", text: { content: line } }] },
+          }))
+        : [];
+
+      const data = await notionRequest("/pages", {
+        method: "POST",
+        body: { parent, properties, children },
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Created Notion page "${title}"\nID: ${data.id}\nURL: ${data.url}`,
+          },
+        ],
+      };
+    }
+  );
+
+  server.tool(
+    "notion_update_page",
+    "Update a Notion page's title or properties, or append text content to it.",
+    {
+      page_id: z.string().describe("Notion page ID to update"),
+      title: z.string().optional().describe("New title for the page"),
+      append_content: z.string().optional().describe("Plain text to append as new paragraph blocks at the end of the page"),
+      archived: z.boolean().optional().describe("Set to true to archive (trash) the page, false to restore it"),
+    },
+    async ({ page_id, title, append_content, archived }) => {
+      const results = [];
+
+      // Update properties / archive state
+      if (title !== undefined || archived !== undefined) {
+        const body = {};
+        if (archived !== undefined) body.archived = archived;
+        if (title !== undefined) {
+          body.properties = {
+            title: { title: [{ text: { content: title } }] },
+          };
+        }
+        const data = await notionRequest(`/pages/${page_id}`, { method: "PATCH", body });
+        results.push(`Updated page "${notionPageTitle(data)}" (ID: ${data.id}).`);
+      }
+
+      // Append content blocks
+      if (append_content) {
+        const children = append_content
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => ({
+            object: "block",
+            type: "paragraph",
+            paragraph: { rich_text: [{ type: "text", text: { content: line } }] },
+          }));
+        await notionRequest(`/blocks/${page_id}/children`, {
+          method: "PATCH",
+          body: { children },
+        });
+        results.push(`Appended ${children.length} paragraph(s) to page.`);
+      }
+
+      return {
+        content: [{ type: "text", text: results.join("\n") || "No changes made." }],
+      };
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Mem tools
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "mem_list",
+    "List recent mems from your Mem workspace.",
+    {
+      limit: z.number().optional().describe("Number of mems to return (default: 20)"),
+    },
+    async ({ limit = 20 }) => {
+      const data = await memRequest(`/mems?limit=${limit}`);
+      const mems = data.mems || data.items || data || [];
+      if (!mems.length) {
+        return { content: [{ type: "text", text: "No mems found." }] };
+      }
+      const lines = mems.map((m) => {
+        const preview = (m.content || m.markdown || "").slice(0, 80).replace(/\n/g, " ");
+        return `ID: ${m.id}\n  ${preview}${preview.length >= 80 ? "…" : ""}\n  Created: ${m.created_at?.slice(0, 10) || "unknown"}`;
+      });
+      return { content: [{ type: "text", text: lines.join("\n\n") }] };
+    }
+  );
+
+  server.tool(
+    "mem_get",
+    "Get the full content of a specific mem by ID.",
+    {
+      mem_id: z.string().describe("The mem ID (from mem_list or mem_search)"),
+    },
+    async ({ mem_id }) => {
+      const m = await memRequest(`/mems/${mem_id}`);
+      const content = m.content || m.markdown || "(no content)";
+      const text =
+        `ID: ${m.id}\n` +
+        `Created: ${m.created_at?.slice(0, 10) || "unknown"} | Updated: ${m.updated_at?.slice(0, 10) || "unknown"}\n\n` +
+        content;
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  server.tool(
+    "mem_create",
+    "Create a new mem in your Mem workspace.",
+    {
+      content: z.string().describe("The content of the mem (markdown supported)"),
+    },
+    async ({ content }) => {
+      const data = await memRequest("/mems", {
+        method: "POST",
+        body: { content },
+      });
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Created mem (ID: ${data.id}).\nCreated: ${data.created_at?.slice(0, 10) || "unknown"}`,
+          },
+        ],
+      };
+    }
+  );
+
+  server.tool(
+    "mem_search",
+    "Search mems in your Mem workspace.",
+    {
+      query: z.string().describe("Search query string"),
+      limit: z.number().optional().describe("Number of results to return (default: 10)"),
+    },
+    async ({ query, limit = 10 }) => {
+      const data = await memRequest("/mems/search", {
+        method: "POST",
+        body: { query, limit },
+      });
+      const mems = data.mems || data.items || data || [];
+      if (!mems.length) {
+        return { content: [{ type: "text", text: "No mems found matching your query." }] };
+      }
+      const lines = mems.map((m) => {
+        const preview = (m.content || m.markdown || "").slice(0, 100).replace(/\n/g, " ");
+        return `ID: ${m.id}\n  ${preview}${preview.length >= 100 ? "…" : ""}`;
+      });
+      return { content: [{ type: "text", text: lines.join("\n\n") }] };
+    }
+  );
+
+  server.tool(
+    "mem_update",
+    "Update (overwrite) the content of an existing mem.",
+    {
+      mem_id: z.string().describe("The mem ID to update"),
+      content: z.string().describe("New content for the mem (replaces existing content)"),
+    },
+    async ({ mem_id, content }) => {
+      const data = await memRequest(`/mems/${mem_id}`, {
+        method: "PATCH",
+        body: { content },
+      });
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Updated mem (ID: ${data.id || mem_id}).\nUpdated: ${data.updated_at?.slice(0, 10) || "unknown"}`,
+          },
+        ],
+      };
+    }
+  );
+
   return server;
 }
 
@@ -968,7 +1330,15 @@ const app = express();
 app.use(express.json());
 
 app.get("/", (_req, res) => {
-  res.json({ status: "ok", service: "github-mcp-server", configured: Boolean(GITHUB_TOKEN) });
+  res.json({
+    status: "ok",
+    service: "manufact-mcp-server",
+    configured: {
+      github: Boolean(GITHUB_TOKEN),
+      notion: Boolean(NOTION_TOKEN),
+      mem: Boolean(MEM_API_KEY),
+    },
+  });
 });
 
 app.get("/health", (_req, res) => {
@@ -1001,8 +1371,8 @@ app.post("/mcp", async (req, res) => {
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`github-mcp-server listening on port ${PORT}`);
-  if (!GITHUB_TOKEN) {
-    console.warn("WARNING: GITHUB_TOKEN is not set. Tools will fail until it is configured.");
-  }
+  console.log(`manufact-mcp-server listening on port ${PORT}`);
+  if (!GITHUB_TOKEN) console.warn("WARNING: GITHUB_TOKEN is not set.");
+  if (!NOTION_TOKEN) console.warn("WARNING: NOTION_TOKEN is not set. Notion tools will fail.");
+  if (!MEM_API_KEY) console.warn("WARNING: MEM_API_KEY is not set. Mem tools will fail.");
 });
