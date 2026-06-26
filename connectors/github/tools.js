@@ -7,6 +7,35 @@ import { githubRequest, toBase64, fromBase64 } from "./client.js";
 import { DEFAULT_OWNER } from "../../config.js";
 import { register as registerDiff } from "./diff.js";
 
+// ---------------------------------------------------------------------------
+// Helper: resolve a file's blob SHA from the Git tree (no size limit)
+// ---------------------------------------------------------------------------
+async function getFileBlobSha(owner, repo, filePath, ref) {
+  const repoInfo = await githubRequest(`/repos/${owner}/${repo}`);
+  const branch = ref || repoInfo.default_branch;
+  let treeSha;
+  try {
+    const refData = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`);
+    treeSha = refData.object.sha;
+  } catch {
+    // ref might be a commit SHA or tag
+    treeSha = branch;
+  }
+  const tree = await githubRequest(`/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`);
+  const entry = tree.tree.find((item) => item.path === filePath && item.type === "blob");
+  if (!entry) throw new Error(`File not found in tree: ${filePath}`);
+  return { blobSha: entry.sha, treeSha };
+}
+
+// ---------------------------------------------------------------------------
+// Helper: fetch file content via Blobs API (no 1MB limit)
+// ---------------------------------------------------------------------------
+async function readFileViaBlob(owner, repo, filePath, ref) {
+  const { blobSha } = await getFileBlobSha(owner, repo, filePath, ref);
+  const blob = await githubRequest(`/repos/${owner}/${repo}/git/blobs/${blobSha}`);
+  return fromBase64(blob.content.replace(/\n/g, ""));
+}
+
 export function register(server) {
 
   // ── File & directory ────────────────────────────────────────────────────
@@ -21,12 +50,8 @@ export function register(server) {
       ref:   z.string().optional().describe("Branch, tag, or commit SHA (default: repo default branch)"),
     },
     async ({ owner = DEFAULT_OWNER, repo, path, ref }) => {
-      const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
-      const data  = await githubRequest(`/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}${query}`);
-      if (Array.isArray(data)) {
-        return { content: [{ type: "text", text: `"${path}" is a directory. Use list_directory instead.` }], isError: true };
-      }
-      return { content: [{ type: "text", text: fromBase64(data.content) }] };
+      const content = await readFileViaBlob(owner, repo, path, ref);
+      return { content: [{ type: "text", text: content }] };
     }
   );
 
@@ -135,18 +160,46 @@ export function register(server) {
     },
     async ({ owner, repo, old_path, new_path, message, branch }) => {
       const commitMessage = message || `rename ${old_path} to ${new_path}`;
-      const query         = branch ? `?ref=${encodeURIComponent(branch)}` : "";
-      const existing      = await githubRequest(`/repos/${owner}/${repo}/contents/${encodeURIComponent(old_path)}${query}`);
-      const content       = existing.content.replace(/\n/g, "");
-      const createResult  = await githubRequest(`/repos/${owner}/${repo}/contents/${encodeURIComponent(new_path)}`, {
-        method: "PUT",
-        body: { message: commitMessage, content, branch },
+
+      // Use Blobs API to read the file (no 1MB limit)
+      const content = await readFileViaBlob(owner, repo, old_path, branch);
+
+      // Get the blob SHA of the old file for deletion
+      const { blobSha: oldBlobSha } = await getFileBlobSha(owner, repo, old_path, branch);
+
+      // Commit new file + delete old file in one operation via Git Data API
+      const repoInfo     = await githubRequest(`/repos/${owner}/${repo}`);
+      const targetBranch = branch || repoInfo.default_branch;
+      const refData      = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(targetBranch)}`);
+      const baseCommit   = await githubRequest(`/repos/${owner}/${repo}/git/commits/${refData.object.sha}`);
+
+      const newBlob = await githubRequest(`/repos/${owner}/${repo}/git/blobs`, {
+        method: "POST",
+        body: { content: toBase64(content), encoding: "base64" },
       });
-      await githubRequest(`/repos/${owner}/${repo}/contents/${encodeURIComponent(old_path)}`, {
-        method: "DELETE",
-        body: { message: commitMessage, sha: existing.sha, branch },
+
+      const newTree = await githubRequest(`/repos/${owner}/${repo}/git/trees`, {
+        method: "POST",
+        body: {
+          base_tree: baseCommit.tree.sha,
+          tree: [
+            { path: new_path, mode: "100644", type: "blob", sha: newBlob.sha },
+            { path: old_path, mode: "100644", type: "blob", sha: null }, // null SHA = delete
+          ],
+        },
       });
-      return { content: [{ type: "text", text: `Renamed ${old_path} → ${new_path} in ${owner}/${repo} (commit ${createResult.commit.sha.slice(0, 7)}).` }] };
+
+      const newCommit = await githubRequest(`/repos/${owner}/${repo}/git/commits`, {
+        method: "POST",
+        body: { message: commitMessage, tree: newTree.sha, parents: [refData.object.sha] },
+      });
+
+      await githubRequest(`/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(targetBranch)}`, {
+        method: "PATCH",
+        body: { sha: newCommit.sha },
+      });
+
+      return { content: [{ type: "text", text: `Renamed ${old_path} → ${new_path} in ${owner}/${repo} (commit ${newCommit.sha.slice(0, 7)}).` }] };
     }
   );
 
@@ -206,15 +259,12 @@ export function register(server) {
       url_headers:  z.record(z.string()).optional().describe("Optional HTTP headers to send when fetching the URL (e.g. Authorization for private sources)"),
     },
     async ({ owner = DEFAULT_OWNER, repo, path, url, message, branch, url_headers = {} }) => {
-      // 1. Fetch the file content from the URL server-side
       const fetchRes = await fetch(url, { headers: url_headers });
       if (!fetchRes.ok) {
         throw new Error(`Failed to fetch ${url}: HTTP ${fetchRes.status}`);
       }
       const content = await fetchRes.text();
 
-      // 2. Commit via Git Data API (blob → tree → commit → ref update)
-      //    This avoids the GitHub Contents API 1MB limit and works for any size.
       const repoInfo     = await githubRequest(`/repos/${owner}/${repo}`);
       const targetBranch = branch || repoInfo.default_branch;
       const refData      = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(targetBranch)}`);
