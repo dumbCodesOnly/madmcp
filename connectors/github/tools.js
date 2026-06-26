@@ -193,6 +193,60 @@ export function register(server) {
     }
   );
 
+  server.tool(
+    "push_file_from_url",
+    "Fetch a file from a URL and commit it to a GitHub repository. Use this instead of push_files when the file content is too large to pass as a parameter (e.g. files > 50kb).",
+    {
+      owner:        z.string().optional().describe(`Repository owner. Defaults to "${DEFAULT_OWNER}" if omitted.`),
+      repo:         z.string().describe("Repository name"),
+      path:         z.string().describe("Destination file path within the repo"),
+      url:          z.string().url().describe("Public URL to fetch the file content from"),
+      message:      z.string().describe("Commit message"),
+      branch:       z.string().optional().describe("Branch to push to (default: repo default branch)"),
+      url_headers:  z.record(z.string()).optional().describe("Optional HTTP headers to send when fetching the URL (e.g. Authorization for private sources)"),
+    },
+    async ({ owner = DEFAULT_OWNER, repo, path, url, message, branch, url_headers = {} }) => {
+      // 1. Fetch the file content from the URL server-side
+      const fetchRes = await fetch(url, { headers: url_headers });
+      if (!fetchRes.ok) {
+        throw new Error(`Failed to fetch ${url}: HTTP ${fetchRes.status}`);
+      }
+      const content = await fetchRes.text();
+
+      // 2. Commit via Git Data API (blob → tree → commit → ref update)
+      //    This avoids the GitHub Contents API 1MB limit and works for any size.
+      const repoInfo     = await githubRequest(`/repos/${owner}/${repo}`);
+      const targetBranch = branch || repoInfo.default_branch;
+      const refData      = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(targetBranch)}`);
+      const baseCommit   = await githubRequest(`/repos/${owner}/${repo}/git/commits/${refData.object.sha}`);
+
+      const blob = await githubRequest(`/repos/${owner}/${repo}/git/blobs`, {
+        method: "POST",
+        body: { content: toBase64(content), encoding: "base64" },
+      });
+
+      const newTree = await githubRequest(`/repos/${owner}/${repo}/git/trees`, {
+        method: "POST",
+        body: {
+          base_tree: baseCommit.tree.sha,
+          tree: [{ path, mode: "100644", type: "blob", sha: blob.sha }],
+        },
+      });
+
+      const newCommit = await githubRequest(`/repos/${owner}/${repo}/git/commits`, {
+        method: "POST",
+        body: { message, tree: newTree.sha, parents: [refData.object.sha] },
+      });
+
+      await githubRequest(`/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(targetBranch)}`, {
+        method: "PATCH",
+        body: { sha: newCommit.sha },
+      });
+
+      return { content: [{ type: "text", text: `Pushed ${path} to ${owner}/${repo}@${targetBranch} (commit ${newCommit.sha.slice(0, 7)}). Source: ${url} (${content.length} chars)` }] };
+    }
+  );
+
   // ── Branches & commits ──────────────────────────────────────────────────
 
   server.tool(
