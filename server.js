@@ -54,7 +54,9 @@ function requireMcpKey(req, res, next) {
 }
 
 const app = express();
-app.use(express.json());
+// Raise body size limit from the 100kb default to 10mb so that push_files
+// and create_or_update_file can handle large source files without truncation.
+app.use(express.json({ limit: "10mb" }));
 
 app.get("/", (_req, res) => {
   res.json({
