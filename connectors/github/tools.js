@@ -4,7 +4,7 @@
 
 import { z } from "zod";
 import fs from "fs/promises";
-import path from "path";
+import nodePath from "path";
 import { githubRequest, toBase64, fromBase64 } from "./client.js";
 import { DEFAULT_OWNER } from "../../config.js";
 import { register as registerDiff } from "./diff.js";
@@ -46,13 +46,6 @@ const CHUNK_THRESHOLD = 100000;
 
 export function register(server) {
 
-  // ── File & directory ────────────────────────────────────────────────────
-
-  server.tool(
-    "read_file",
-    "Read a file's contents from a GitHub repository. Automatically returns the file in chunks if it exceeds 100,000 characters, with pagination info so you can call read_file_chunked for subsequent pages.",
-    {
-      owner: z.string().optional().describe(`Repository owner. Defaults to "${DEFAULT_OWNER}" if omitted.`),
   // ── Download repo to Claude local disk ──────────────────────────────────
 
   server.tool(
@@ -111,8 +104,8 @@ export function register(server) {
       for (const item of blobs) {
         try {
           const content  = await readFileViaBlob(owner, repo, item.path, treeSha);
-          const fileDest = path.join(localRoot, src_path ? item.path.slice(src_path.length).replace(/^\//, "") : item.path);
-          await fs.mkdir(path.dirname(fileDest), { recursive: true });
+          const fileDest = nodePath.join(localRoot, src_path ? item.path.slice(src_path.length).replace(/^\//, "") : item.path);
+          await fs.mkdir(nodePath.dirname(fileDest), { recursive: true });
           await fs.writeFile(fileDest, content, "utf8");
           results.push(`✅ ${item.path} → ${fileDest}`);
         } catch (err) {
@@ -120,13 +113,20 @@ export function register(server) {
         }
       }
 
-      const ok     = results.filter((r) => r.startsWith("✅")).length;
-      const failed = results.filter((r) => r.startsWith("❌")).length;
+      const ok      = results.filter((r) => r.startsWith("✅")).length;
+      const failed  = results.filter((r) => r.startsWith("❌")).length;
       const summary = `Downloaded ${ok}/${blobs.length} files to ${localRoot}${failed ? ` (${failed} failed)` : ""}\n\n`;
       return { content: [{ type: "text", text: summary + results.join("\n") }] };
     }
   );
 
+  // ── File & directory ────────────────────────────────────────────────────
+
+  server.tool(
+    "read_file",
+    "Read a file's contents from a GitHub repository. Automatically returns the file in chunks if it exceeds 100,000 characters, with pagination info so you can call read_file_chunked for subsequent pages.",
+    {
+      owner: z.string().optional().describe(`Repository owner. Defaults to "${DEFAULT_OWNER}" if omitted.`),
       repo:  z.string().describe("Repository name"),
       path:  z.string().describe("File path within the repo, e.g. 'src/server.js'"),
       ref:   z.string().optional().describe("Branch, tag, or commit SHA (default: repo default branch)"),
