@@ -1,0 +1,89 @@
+// ---------------------------------------------------------------------------
+// connectors/github/prs.js — pull request tools
+// ---------------------------------------------------------------------------
+
+import { z } from "zod";
+import { githubRequest } from "./client.js";
+import { DEFAULT_OWNER } from "../../config.js";
+
+export function register(server) {
+
+  server.tool(
+    "get_pull_requests",
+    "List pull requests in a GitHub repository.",
+    {
+      owner:    z.string().describe("Repository owner (user or org)"),
+      repo:     z.string().describe("Repository name"),
+      state:    z.enum(["open", "closed", "all"]).optional().describe("Filter by PR state (default: open)"),
+      per_page: z.number().optional().describe("Number of PRs to return, max 100 (default: 20)"),
+    },
+    async ({ owner, repo, state = "open", per_page = 20 }) => {
+      const data = await githubRequest(`/repos/${owner}/${repo}/pulls?state=${state}&per_page=${per_page}`);
+      if (!data.length) return { content: [{ type: "text", text: `No ${state} pull requests found.` }] };
+      const lines = data.map((pr) =>
+        `#${pr.number} [${pr.state}] ${pr.title}\n  ${pr.head.label} → ${pr.base.label} | by ${pr.user.login} | ${pr.created_at.slice(0, 10)}\n  ${pr.html_url}`
+      );
+      return { content: [{ type: "text", text: lines.join("\n\n") }] };
+    }
+  );
+
+  server.tool(
+    "create_pull_request",
+    "Open a new pull request in a GitHub repository.",
+    {
+      owner: z.string().describe("Repository owner (user or org)"),
+      repo:  z.string().describe("Repository name"),
+      title: z.string().describe("PR title"),
+      head:  z.string().describe("The branch containing the changes (source branch)"),
+      base:  z.string().describe("The branch to merge into (target branch, e.g. 'main')"),
+      body:  z.string().optional().describe("PR description body"),
+      draft: z.boolean().optional().describe("Open as a draft PR (default: false)"),
+    },
+    async ({ owner, repo, title, head, base, body, draft = false }) => {
+      const data = await githubRequest(`/repos/${owner}/${repo}/pulls`, {
+        method: "POST",
+        body: { title, head, base, body, draft },
+      });
+      return { content: [{ type: "text", text: `Created PR #${data.number}: "${data.title}"\n${data.html_url}` }] };
+    }
+  );
+
+  server.tool(
+    "merge_pull_request",
+    "Merge a pull request in a GitHub repository.",
+    {
+      owner:          z.string().describe("Repository owner (user or org)"),
+      repo:           z.string().describe("Repository name"),
+      pull_number:    z.number().describe("Pull request number"),
+      merge_method:   z.enum(["merge", "squash", "rebase"]).optional().describe("Merge strategy (default: merge)"),
+      commit_title:   z.string().optional().describe("Title for the merge commit"),
+      commit_message: z.string().optional().describe("Body for the merge commit"),
+    },
+    async ({ owner, repo, pull_number, merge_method = "merge", commit_title, commit_message }) => {
+      const data = await githubRequest(`/repos/${owner}/${repo}/pulls/${pull_number}/merge`, {
+        method: "PUT",
+        body: { merge_method, commit_title, commit_message },
+      });
+      return { content: [{ type: "text", text: `Merged PR #${pull_number}: ${data.message}\nCommit: ${data.sha?.slice(0, 7) ?? "n/a"}` }] };
+    }
+  );
+
+  server.tool(
+    "review_pull_request",
+    "Submit a review on a pull request (approve, request changes, or comment).",
+    {
+      owner:       z.string().describe("Repository owner (user or org)"),
+      repo:        z.string().describe("Repository name"),
+      pull_number: z.number().describe("Pull request number"),
+      event:       z.enum(["APPROVE", "REQUEST_CHANGES", "COMMENT"]).describe("Review action"),
+      body:        z.string().optional().describe("Review comment body"),
+    },
+    async ({ owner, repo, pull_number, event, body }) => {
+      const data = await githubRequest(`/repos/${owner}/${repo}/pulls/${pull_number}/reviews`, {
+        method: "POST",
+        body: { event, body },
+      });
+      return { content: [{ type: "text", text: `Submitted review #${data.id} (${event}) on PR #${pull_number}.` }] };
+    }
+  );
+}
