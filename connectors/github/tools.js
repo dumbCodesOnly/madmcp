@@ -18,7 +18,6 @@ async function getFileBlobSha(owner, repo, filePath, ref) {
     const refData = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`);
     treeSha = refData.object.sha;
   } catch {
-    // ref might be a commit SHA or tag
     treeSha = branch;
   }
   const tree = await githubRequest(`/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`);
@@ -44,20 +43,20 @@ const CHUNK_THRESHOLD = 100000;
 
 export function register(server) {
 
-  // ── Download repo to Claude local disk ──────────────────────────────────
+  // ── Download repo — returns file contents as JSON payload to Claude ──────
 
-    "Fetch all files from a GitHub repository and return their contents as a JSON payload. Claude receives the file tree and content directly and can write them to local disk using create_file.",
+  server.tool(
     "download_repo",
-    "Download files from a GitHub repository directly to Claude's local working directory (/home/claude). Fetches the full file tree (or a subdirectory) and writes every file to disk so Claude can read, run, grep, and patch them locally.",
+    "Fetch all files from a GitHub repository and return their full contents as a JSON payload. Claude receives {summary, files:[{path,content}], errors} and can then write them locally using create_file. This is the correct way to 'clone' a repo to Claude's local disk.",
     {
       owner:      z.string().optional().describe(`Repository owner. Defaults to "${DEFAULT_OWNER}" if omitted.`),
       repo:       z.string().describe("Repository name"),
+      ref:        z.string().optional().describe("Branch, tag, or commit SHA (default: repo default branch)"),
       src_path:   z.string().optional().describe("Subdirectory inside the repo to download (default: entire repo root)"),
-      dest:       z.string().optional().describe("Local destination directory (default: /home/claude/<repo>)"),
       extensions: z.array(z.string()).optional().describe("Only download files with these extensions e.g. ['.js', '.ts']. Omit to download everything."),
-    async ({ owner = DEFAULT_OWNER, repo, ref, src_path = "", extensions, max_files = 200 }) => {
+      max_files:  z.number().optional().describe("Safety cap on number of files to download (default: 200)"),
     },
-    async ({ owner = DEFAULT_OWNER, repo, ref, src_path = "", dest, extensions, max_files = 200 }) => {
+    async ({ owner = DEFAULT_OWNER, repo, ref, src_path = "", extensions, max_files = 200 }) => {
       // 1. Resolve the tree SHA
       const repoInfo     = await githubRequest(`/repos/${owner}/${repo}`);
       const targetBranch = ref || repoInfo.default_branch;
@@ -66,7 +65,7 @@ export function register(server) {
         const refData = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(targetBranch)}`);
         treeSha = refData.object.sha;
       } catch {
-        treeSha = targetBranch; // treat as commit SHA or tag
+        treeSha = targetBranch;
       }
 
       // 2. Fetch the full recursive tree
@@ -84,29 +83,29 @@ export function register(server) {
         const exts = extensions.map((e) => e.startsWith(".") ? e : "." + e);
         blobs = blobs.filter((item) => exts.some((ext) => item.path.endsWith(ext)));
       }
-      // 6. Fetch all file contents and return as JSON payload
-      const files = [];
-      const errors = [];
+
+      // 5. Safety cap
+      if (blobs.length > max_files) {
+        return {
+          content: [{ type: "text", text: `⚠️ Repo has ${blobs.length} matching files which exceeds max_files=${max_files}. Use src_path or extensions to narrow the scope, or raise max_files.` }],
           isError: true,
         };
       }
-          files.push({ path: item.path, content });
-      // 7. Download and write each file
-          errors.push({ path: item.path, error: err.message });
+
+      // 6. Fetch all contents and return as JSON — Claude writes them to disk
+      const files = [];
+      const errors = [];
       for (const item of blobs) {
         try {
-          const content  = await readFileViaBlob(owner, repo, item.path, treeSha);
-      const summary = `Fetched ${files.length}/${blobs.length} files from ${owner}/${repo}${errors.length ? ` (${errors.length} failed)` : ""}`;
-      return { content: [{ type: "text", text: JSON.stringify({ summary, files, errors }, null, 2) }] };
+          const content = await readFileViaBlob(owner, repo, item.path, treeSha);
+          files.push({ path: item.path, content });
         } catch (err) {
-          results.push(`❌ ${item.path} — ${err.message}`);
+          errors.push({ path: item.path, error: err.message });
         }
       }
 
-      const ok      = results.filter((r) => r.startsWith("✅")).length;
-      const failed  = results.filter((r) => r.startsWith("❌")).length;
-      const summary = `Downloaded ${ok}/${blobs.length} files to ${localRoot}${failed ? ` (${failed} failed)` : ""}\n\n`;
-      return { content: [{ type: "text", text: summary + results.join("\n") }] };
+      const summary = `Fetched ${files.length}/${blobs.length} files from ${owner}/${repo}@${targetBranch}${errors.length ? ` (${errors.length} failed)` : ""}`;
+      return { content: [{ type: "text", text: JSON.stringify({ summary, files, errors }, null, 2) }] };
     }
   );
 
@@ -124,13 +123,9 @@ export function register(server) {
     async ({ owner = DEFAULT_OWNER, repo, path, ref }) => {
       const content = await readFileViaBlob(owner, repo, path, ref);
       const total   = content.length;
-
-      // Small file — return everything as-is
       if (total <= CHUNK_THRESHOLD) {
         return { content: [{ type: "text", text: content }] };
       }
-
-      // Large file — return first chunk with pagination header
       const slice     = content.slice(0, CHUNK_SIZE);
       const remaining = total - CHUNK_SIZE;
       const header    =
@@ -138,7 +133,6 @@ export function register(server) {
         `Returning first ${CHUNK_SIZE.toLocaleString()} chars. ` +
         `Use read_file_chunked with char_offset=${CHUNK_SIZE} to continue.\n` +
         `[File: ${path} | Total: ${total} chars | Offset: 0 | Returning: ${slice.length} chars | Remaining: ${remaining} chars]\n\n`;
-
       return { content: [{ type: "text", text: header + slice }] };
     }
   );
@@ -270,20 +264,15 @@ export function register(server) {
     },
     async ({ owner, repo, old_path, new_path, message, branch }) => {
       const commitMessage = message || `rename ${old_path} to ${new_path}`;
-
       const content = await readFileViaBlob(owner, repo, old_path, branch);
-      const { blobSha: oldBlobSha } = await getFileBlobSha(owner, repo, old_path, branch);
-
       const repoInfo     = await githubRequest(`/repos/${owner}/${repo}`);
       const targetBranch = branch || repoInfo.default_branch;
       const refData      = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(targetBranch)}`);
       const baseCommit   = await githubRequest(`/repos/${owner}/${repo}/git/commits/${refData.object.sha}`);
-
       const newBlob = await githubRequest(`/repos/${owner}/${repo}/git/blobs`, {
         method: "POST",
         body: { content: toBase64(content), encoding: "base64" },
       });
-
       const newTree = await githubRequest(`/repos/${owner}/${repo}/git/trees`, {
         method: "POST",
         body: {
@@ -294,17 +283,14 @@ export function register(server) {
           ],
         },
       });
-
       const newCommit = await githubRequest(`/repos/${owner}/${repo}/git/commits`, {
         method: "POST",
         body: { message: commitMessage, tree: newTree.sha, parents: [refData.object.sha] },
       });
-
       await githubRequest(`/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(targetBranch)}`, {
         method: "PATCH",
         body: { sha: newCommit.sha },
       });
-
       return { content: [{ type: "text", text: `Renamed ${old_path} → ${new_path} in ${owner}/${repo} (commit ${newCommit.sha.slice(0, 7)}).` }] };
     }
   );
@@ -366,39 +352,28 @@ export function register(server) {
     },
     async ({ owner = DEFAULT_OWNER, repo, path, url, message, branch, url_headers = {} }) => {
       const fetchRes = await fetch(url, { headers: url_headers });
-      if (!fetchRes.ok) {
-        throw new Error(`Failed to fetch ${url}: HTTP ${fetchRes.status}`);
-      }
-      const content = await fetchRes.text();
-
+      if (!fetchRes.ok) throw new Error(`Failed to fetch ${url}: HTTP ${fetchRes.status}`);
+      const content      = await fetchRes.text();
       const repoInfo     = await githubRequest(`/repos/${owner}/${repo}`);
       const targetBranch = branch || repoInfo.default_branch;
       const refData      = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(targetBranch)}`);
       const baseCommit   = await githubRequest(`/repos/${owner}/${repo}/git/commits/${refData.object.sha}`);
-
       const blob = await githubRequest(`/repos/${owner}/${repo}/git/blobs`, {
         method: "POST",
         body: { content: toBase64(content), encoding: "base64" },
       });
-
       const newTree = await githubRequest(`/repos/${owner}/${repo}/git/trees`, {
         method: "POST",
-        body: {
-          base_tree: baseCommit.tree.sha,
-          tree: [{ path, mode: "100644", type: "blob", sha: blob.sha }],
-        },
+        body: { base_tree: baseCommit.tree.sha, tree: [{ path, mode: "100644", type: "blob", sha: blob.sha }] },
       });
-
       const newCommit = await githubRequest(`/repos/${owner}/${repo}/git/commits`, {
         method: "POST",
         body: { message, tree: newTree.sha, parents: [refData.object.sha] },
       });
-
       await githubRequest(`/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(targetBranch)}`, {
         method: "PATCH",
         body: { sha: newCommit.sha },
       });
-
       return { content: [{ type: "text", text: `Pushed ${path} to ${owner}/${repo}@${targetBranch} (commit ${newCommit.sha.slice(0, 7)}). Source: ${url} (${content.length} chars)` }] };
     }
   );
