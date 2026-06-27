@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
 // connectors/github/resource.js — MCP resource provider for GitHub files
 // Exposes files as MCP resources via URI: github://{owner}/{repo}/{path}
-// Uses the SDK's ResourceTemplate for URI pattern matching.
+// Returns content as a base64 blob to avoid text truncation in MCP clients.
 // ---------------------------------------------------------------------------
 
 import { ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { githubRequest, fromBase64 } from "./client.js";
+import { githubRequest, fromBase64, toBase64 } from "./client.js";
 import { DEFAULT_OWNER } from "../../config.js";
 
 function guessMime(path) {
@@ -22,7 +22,7 @@ function guessMime(path) {
     rs:   "text/x-rust",
     go:   "text/x-go",
   };
-  return map[ext] || "text/plain";
+  return map[ext] || "application/octet-stream";
 }
 
 export function register(server) {
@@ -35,24 +35,25 @@ export function register(server) {
       const path  = variables.path;
 
       // Resolve default branch
-      const repoInfo     = await githubRequest(`/repos/${owner}/${repo}`);
-      const targetBranch = repoInfo.default_branch;
+      const repoInfo   = await githubRequest(`/repos/${owner}/${repo}`);
+      const branch     = repoInfo.default_branch;
 
       // Get blob SHA from tree
-      const refData = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(targetBranch)}`);
+      const refData = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`);
       const tree    = await githubRequest(`/repos/${owner}/${repo}/git/trees/${refData.object.sha}?recursive=1`);
       const entry   = tree.tree.find((item) => item.path === path && item.type === "blob");
       if (!entry) throw new Error(`File not found in tree: ${path}`);
 
-      // Fetch full content via Blobs API (no size limit)
-      const blob    = await githubRequest(`/repos/${owner}/${repo}/git/blobs/${entry.sha}`);
-      const content = fromBase64(blob.content.replace(/\n/g, ""));
+      // Fetch raw base64 directly from blob (GitHub already returns it base64-encoded)
+      const blob = await githubRequest(`/repos/${owner}/${repo}/git/blobs/${entry.sha}`);
+      // blob.content is already base64 with newlines — strip newlines for clean base64
+      const base64 = blob.content.replace(/\n/g, "");
 
       return {
         contents: [{
           uri:      uri.href,
           mimeType: guessMime(path),
-          text:     content,
+          blob:     base64,
         }],
       };
     }
