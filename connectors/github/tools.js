@@ -3,6 +3,8 @@
 // ---------------------------------------------------------------------------
 
 import { z } from "zod";
+import fs from "fs/promises";
+import path from "path";
 import { githubRequest, toBase64, fromBase64 } from "./client.js";
 import { DEFAULT_OWNER } from "../../config.js";
 import { register as registerDiff } from "./diff.js";
@@ -51,6 +53,80 @@ export function register(server) {
     "Read a file's contents from a GitHub repository. Automatically returns the file in chunks if it exceeds 100,000 characters, with pagination info so you can call read_file_chunked for subsequent pages.",
     {
       owner: z.string().optional().describe(`Repository owner. Defaults to "${DEFAULT_OWNER}" if omitted.`),
+  // ── Download repo to Claude local disk ──────────────────────────────────
+
+  server.tool(
+    "download_repo",
+    "Download files from a GitHub repository directly to Claude's local working directory (/home/claude). Fetches the full file tree (or a subdirectory) and writes every file to disk so Claude can read, run, grep, and patch them locally.",
+    {
+      owner:      z.string().optional().describe(`Repository owner. Defaults to "${DEFAULT_OWNER}" if omitted.`),
+      repo:       z.string().describe("Repository name"),
+      ref:        z.string().optional().describe("Branch, tag, or commit SHA (default: repo default branch)"),
+      src_path:   z.string().optional().describe("Subdirectory inside the repo to download (default: entire repo root)"),
+      dest:       z.string().optional().describe("Local destination directory (default: /home/claude/<repo>)"),
+      extensions: z.array(z.string()).optional().describe("Only download files with these extensions e.g. ['.js', '.ts']. Omit to download everything."),
+      max_files:  z.number().optional().describe("Safety cap on number of files to download (default: 200)"),
+    },
+    async ({ owner = DEFAULT_OWNER, repo, ref, src_path = "", dest, extensions, max_files = 200 }) => {
+      // 1. Resolve the tree SHA
+      const repoInfo     = await githubRequest(`/repos/${owner}/${repo}`);
+      const targetBranch = ref || repoInfo.default_branch;
+      let treeSha;
+      try {
+        const refData = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(targetBranch)}`);
+        treeSha = refData.object.sha;
+      } catch {
+        treeSha = targetBranch; // treat as commit SHA or tag
+      }
+
+      // 2. Fetch the full recursive tree
+      const treeData = await githubRequest(`/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`);
+      let blobs = treeData.tree.filter((item) => item.type === "blob");
+
+      // 3. Filter by src_path prefix
+      if (src_path) {
+        const prefix = src_path.endsWith("/") ? src_path : src_path + "/";
+        blobs = blobs.filter((item) => item.path.startsWith(prefix));
+      }
+
+      // 4. Filter by extension
+      if (extensions && extensions.length > 0) {
+        const exts = extensions.map((e) => e.startsWith(".") ? e : "." + e);
+        blobs = blobs.filter((item) => exts.some((ext) => item.path.endsWith(ext)));
+      }
+
+      // 5. Safety cap
+      if (blobs.length > max_files) {
+        return {
+          content: [{ type: "text", text: `⚠️ Repo has ${blobs.length} matching files which exceeds max_files=${max_files}. Use src_path or extensions to narrow the scope, or raise max_files.` }],
+          isError: true,
+        };
+      }
+
+      // 6. Resolve local destination
+      const localRoot = dest || `/home/claude/${repo}`;
+
+      // 7. Download and write each file
+      const results = [];
+      for (const item of blobs) {
+        try {
+          const content  = await readFileViaBlob(owner, repo, item.path, treeSha);
+          const fileDest = path.join(localRoot, src_path ? item.path.slice(src_path.length).replace(/^\//, "") : item.path);
+          await fs.mkdir(path.dirname(fileDest), { recursive: true });
+          await fs.writeFile(fileDest, content, "utf8");
+          results.push(`✅ ${item.path} → ${fileDest}`);
+        } catch (err) {
+          results.push(`❌ ${item.path} — ${err.message}`);
+        }
+      }
+
+      const ok     = results.filter((r) => r.startsWith("✅")).length;
+      const failed = results.filter((r) => r.startsWith("❌")).length;
+      const summary = `Downloaded ${ok}/${blobs.length} files to ${localRoot}${failed ? ` (${failed} failed)` : ""}\n\n`;
+      return { content: [{ type: "text", text: summary + results.join("\n") }] };
+    }
+  );
+
       repo:  z.string().describe("Repository name"),
       path:  z.string().describe("File path within the repo, e.g. 'src/server.js'"),
       ref:   z.string().optional().describe("Branch, tag, or commit SHA (default: repo default branch)"),
