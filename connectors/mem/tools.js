@@ -189,4 +189,30 @@ export function register(server) {
       return { content: [{ type: "text", text: `Deleted memory (ID: ${memory_id}).` }] };
     }
   );
+
+  // ── Delete multiple memories in one call ─────────────────────────────────
+  server.tool(
+    "mem0_delete_batch",
+    "Permanently delete multiple Mem0 memories in a single call. Returns a per-item success/failure report.",
+    {
+      memory_ids: z.array(z.string()).min(1).describe("List of memory IDs to delete"),
+    },
+    async ({ memory_ids }) => {
+      const results = await Promise.allSettled(
+        memory_ids.map((id) => mem0Request(`/v1/memories/${id}/`, { method: "DELETE" }))
+      );
+      const lines = results.map((r, i) =>
+        r.status === "fulfilled"
+          ? `✓ Deleted: ${memory_ids[i]}`
+          : `✗ Failed:  ${memory_ids[i]} — ${r.reason?.message || r.reason}`
+      );
+      const deleted = results.filter((r) => r.status === "fulfilled").length;
+      return {
+        content: [{
+          type: "text",
+          text: `${deleted}/${memory_ids.length} deleted.\n\n${lines.join("\n")}`,
+        }],
+      };
+    }
+  );
 }
