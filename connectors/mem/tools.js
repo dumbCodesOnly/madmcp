@@ -60,10 +60,12 @@ export function register(server) {
     async ({ memory_id }) => {
       const m = await mem0Request(`/v1/memories/${memory_id}/`);
       const cats = Array.isArray(m.categories) && m.categories.length ? `\nCategories: ${m.categories.join(", ")}` : "";
+      const meta = m.metadata && Object.keys(m.metadata).length ? `\n\nMetadata:\n${JSON.stringify(m.metadata, null, 2)}` : "";
       const text =
         `ID: ${m.id}\n` +
         `Created: ${m.created_at?.slice(0, 10) || "unknown"} | Updated: ${m.updated_at?.slice(0, 10) || "unknown"}${cats}\n\n` +
-        (m.memory || m.text || "(no content)");
+        (m.memory || m.text || "(no content)") +
+        meta;
       return { content: [{ type: "text", text }] };
     }
   );
@@ -79,14 +81,16 @@ export function register(server) {
       run_id:     z.string().optional().describe("Optional run/session ID for finer-grained scoping"),
       categories: z.array(z.string()).optional().describe("Optional category tags to attach to this memory (e.g. ['manager.js','decisions']) — improves filtered search later"),
       metadata:   z.record(z.any()).optional().describe("Optional arbitrary metadata object to attach (e.g. {project: 'manager.js'})"),
+      infer:      z.boolean().optional().describe("If false, bypasses Mem0's LLM extraction and stores the content verbatim ('direct import') instead of atomizing/rephrasing it into inferred facts. Default: true (Mem0's default extraction behavior)."),
     },
-    async ({ content, user_id = MEM0_USER_ID, agent_id, run_id, categories, metadata }) => {
+    async ({ content, user_id = MEM0_USER_ID, agent_id, run_id, categories, metadata, infer }) => {
       const messages = [{ role: "user", content }];
       const body = { messages, user_id };
       if (agent_id) body.agent_id = agent_id;
       if (run_id) body.run_id = run_id;
       if (categories?.length) body.categories = categories;
       if (metadata) body.metadata = metadata;
+      if (typeof infer === "boolean") body.infer = infer;
       const data = await mem0Request("/v3/memories/add/", { method: "POST", body });
       const eventId = data.event_id || data.id;
       return {
@@ -112,15 +116,17 @@ export function register(server) {
         run_id:     z.string().optional().describe("Optional run/session ID for finer-grained scoping"),
         categories: z.array(z.string()).optional().describe("Optional category tags for this memory"),
         metadata:   z.record(z.any()).optional().describe("Optional arbitrary metadata object for this memory"),
+        infer:      z.boolean().optional().describe("If false, bypasses Mem0's LLM extraction and stores the content verbatim instead of atomizing/rephrasing it. Default: true."),
       })).min(1).describe("List of memories to add"),
     },
     async ({ items }) => {
-      const results = await Promise.allSettled(items.map(({ content, user_id = MEM0_USER_ID, agent_id, run_id, categories, metadata }) => {
+      const results = await Promise.allSettled(items.map(({ content, user_id = MEM0_USER_ID, agent_id, run_id, categories, metadata, infer }) => {
         const body = { messages: [{ role: "user", content }], user_id };
         if (agent_id) body.agent_id = agent_id;
         if (run_id) body.run_id = run_id;
         if (categories?.length) body.categories = categories;
         if (metadata) body.metadata = metadata;
+        if (typeof infer === "boolean") body.infer = infer;
         return mem0Request("/v3/memories/add/", { method: "POST", body });
       }));
       const lines = results.map((r, i) => {
