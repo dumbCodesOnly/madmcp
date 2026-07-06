@@ -127,7 +127,7 @@ export function register(server) {
         const body = { messages: [{ role: "user", content }], user_id, infer };
         if (agent_id) body.agent_id = agent_id;
         if (run_id) body.run_id = run_id;
-        if (categories?.length) body.categories = categories;
+        if (categories?.length) body.custom_categories = categories.map((c) => ({ [c]: `Custom category: ${c}` }));
         if (metadata) body.metadata = metadata;
         return mem0Request("/v3/memories/add/", { method: "POST", body });
       }));
