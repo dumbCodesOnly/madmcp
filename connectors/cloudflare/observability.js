@@ -62,7 +62,6 @@ export function register(server) {
       dataset: z.string().optional().describe("Telemetry dataset (default: 'cloudflare-workers')"),
       timeframe_from: z.string().describe("Start of time range, ISO 8601 or epoch millis"),
       timeframe_to: z.string().describe("End of time range, ISO 8601 or epoch millis"),
-    },
       type: z.enum(["string", "boolean", "number"]).optional().describe("The value type of the key being listed (required by the Cloudflare API). Default: 'string'."),
     },
     async ({ key, dataset = "cloudflare-workers", timeframe_from, timeframe_to, type = "string" }) =>
