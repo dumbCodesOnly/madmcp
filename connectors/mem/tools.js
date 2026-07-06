@@ -88,7 +88,11 @@ export function register(server) {
       const body = { messages, user_id, infer };
       if (agent_id) body.agent_id = agent_id;
       if (run_id) body.run_id = run_id;
-      if (categories?.length) body.categories = categories;
+      // Mem0's add endpoint only recognizes per-call category overrides under
+      // `custom_categories`, shaped as [{ name: description }, ...] — a plain
+      // `categories: string[]` field is silently ignored and falls back to
+      // Mem0's own default classifier. Reshape accordingly.
+      if (categories?.length) body.custom_categories = categories.map((c) => ({ [c]: `Custom category: ${c}` }));
       if (metadata) body.metadata = metadata;
       const data = await mem0Request("/v3/memories/add/", { method: "POST", body });
       const eventId = data.event_id || data.id;
