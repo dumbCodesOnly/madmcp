@@ -9,6 +9,7 @@ import * as r2 from "./r2.js";
 import * as workers from "./workers.js";
 import * as hyperdrive from "./hyperdrive.js";
 import * as observability from "./observability.js";
+import * as observabilityCompare from "./observability_compare.js";
 
 export function register(server) {
   d1.register(server);
@@ -17,4 +18,5 @@ export function register(server) {
   workers.register(server);
   hyperdrive.register(server);
   observability.register(server);
+  observabilityCompare.register(server);
 }

@@ -24,7 +24,7 @@ function textResult(data) {
 // Cloudflare's telemetry query/values endpoints require timeframe bounds as
 // epoch millis (numbers), not ISO strings — accept either from callers and
 // normalize here.
-function toEpochMillis(ts) {
+export function toEpochMillis(ts) {
   if (typeof ts === "number") return ts;
   if (/^\d+$/.test(ts)) return Number(ts);
   const parsed = Date.parse(ts);
@@ -57,6 +57,37 @@ const filterSchema = z.object({
   operator: z.string().describe("Comparison operator, e.g. 'eq', 'neq', 'gt', 'lt', 'includes'"),
   value: z.union([z.string(), z.number(), z.boolean()]).describe("Value to compare against"),
 }).passthrough();
+
+// Shared query function — used directly by cf_workers_observability_query
+// and reused by cf_workers_observability_compare so both tools stay in sync
+// on filter-normalization and timeframe handling.
+export async function queryTelemetry({
+  timeframe_from,
+  timeframe_to,
+  script_name,
+  view = "events",
+  dataset = "cloudflare-workers",
+  filters = [],
+  limit,
+  query_id,
+}) {
+  const rawFilters = script_name
+    ? [{ key: "$metadata.service", operator: "eq", value: script_name }, ...filters]
+    : filters;
+
+  const allFilters = rawFilters.map(normalizeFilter);
+
+  const body = {
+    queryId: query_id || `manufact-${Date.now()}`,
+    view,
+    datasets: [dataset],
+    timeframe: { from: toEpochMillis(timeframe_from), to: toEpochMillis(timeframe_to) },
+    parameters: { filters: allFilters },
+    ...(limit ? { limit } : {}),
+  };
+
+  return cfAccountRequest("/workers/observability/telemetry/query", { method: "POST", body });
+}
 
 export function register(server) {
   server.tool(
@@ -109,23 +140,6 @@ export function register(server) {
       limit: z.number().optional().describe("Max number of results (default: server default, typically 100)"),
       query_id: z.string().optional().describe("Optional query identifier for the request (any string); Cloudflare uses this to tag/save the query"),
     },
-    async ({ timeframe_from, timeframe_to, script_name, view = "events", dataset = "cloudflare-workers", filters = [], limit, query_id }) => {
-      const rawFilters = script_name
-        ? [{ key: "$metadata.service", operator: "eq", value: script_name }, ...filters]
-        : filters;
-
-      const allFilters = rawFilters.map(normalizeFilter);
-
-      const body = {
-        queryId: query_id || `manufact-${Date.now()}`,
-        view,
-        datasets: [dataset],
-        timeframe: { from: toEpochMillis(timeframe_from), to: toEpochMillis(timeframe_to) },
-        parameters: { filters: allFilters },
-        ...(limit ? { limit } : {}),
-      };
-
-      return textResult(await cfAccountRequest("/workers/observability/telemetry/query", { method: "POST", body }));
-    }
+    async (args) => textResult(await queryTelemetry(args))
   );
 }
