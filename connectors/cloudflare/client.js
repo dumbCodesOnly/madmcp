@@ -49,8 +49,15 @@ export async function cfRequest(path, { method = "GET", body, accept } = {}) {
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
   if (!res.ok || (data && data.success === false)) {
-    const errors = (data && data.errors && data.errors.map(e => e.message).join("; ")) || res.statusText;
-    throw new Error(`Cloudflare API error (${res.status}): ${errors}`);
+    const errorList = data && Array.isArray(data.errors) ? data.errors : [];
+    const errors = errorList.length
+      ? errorList.map(e => `${e.message}${e.code ? ` (code ${e.code})` : ""}${e.error_chain ? ` [chain: ${JSON.stringify(e.error_chain)}]` : ""}`).join("; ")
+      : null;
+    // When Cloudflare returns an empty errors array (common on 400s from the
+    // observability query/values endpoints), fall back to the raw response
+    // body so the actual validation failure isn't swallowed.
+    const fallback = errors || (data ? JSON.stringify(data) : null) || text || res.statusText;
+    throw new Error(`Cloudflare API error (${res.status}): ${fallback}`);
   }
 
   // Cloudflare wraps successful payloads as { success, result, result_info }.
