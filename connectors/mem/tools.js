@@ -157,6 +157,33 @@ async function findPossibleDuplicates({ user_id, agent_id, run_id, content, thre
   return memories.filter((m) => typeof m.score === "number" && m.score >= threshold);
 }
 
+// NOTE on add-then-verify (2026-07-10, following manufact-mem0-add-silent-
+// failure-diagnostic): /v3/memories/add/ returning a 2xx with an event_id
+// only means Mem0 ACCEPTED the job, not that its async extraction/indexing
+// pipeline actually materialized the memory — that step has been observed
+// to silently drop a memory with no error surfaced anywhere. Since this
+// server has no webhook/callback for that job, the only way to check is to
+// poll for the memory to actually appear. Matches on entity_id (exact,
+// deterministic) when given, otherwise on exact verbatim content (reliable
+// since infer:false — the default — stores content unchanged; a caller
+// using infer:true won't get a reliable match here since Mem0 may have
+// rephrased it, so verification is best-effort in that case).
+async function verifyLanded({ user_id, agent_id, run_id, entity_id, content }, { retries = 4, delayMs = 1200 } = {}) {
+  const filters = { user_id };
+  if (agent_id) filters.agent_id = agent_id;
+  if (run_id) filters.run_id = run_id;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, delayMs * attempt));
+    const data = await mem0Request("/v3/memories/", { method: "POST", body: { filters, page: 1, page_size: 20 } });
+    const memories = data.results || data.memories || data || [];
+    const found = memories.find((m) =>
+      entity_id ? m.metadata?.entity_id === entity_id : (m.memory || m.text) === content
+    );
+    if (found) return found;
+  }
+  return null;
+}
+
 export function register(server) {
 
   // ── List memories ────────────────────────────────────────────────────────
@@ -292,11 +319,15 @@ export function register(server) {
       if (Object.keys(meta).length) body.metadata = meta;
       const data = await mem0Request("/v3/memories/add/", { method: "POST", body });
       const eventId = data.event_id || data.id;
+      const landed = await verifyLanded({ user_id, agent_id, run_id, entity_id, content });
+      const landedNote = landed
+        ? ` Confirmed landed (id: ${landed.id}).`
+        : `\n\n⚠ Could not confirm this memory landed after several verification attempts — Mem0's async job may have silently failed (see manufact-mem0-add-silent-failure-diagnostic). Re-run mem0_search/mem0_list shortly to check, and retry mem0_add if it's still missing.`;
       return {
         content: [{
           type: "text",
           text: (eventId
-            ? `Memory extraction started (event_id: ${eventId}). Mem0 will process and store the relevant facts asynchronously.`
+            ? `Memory extraction started (event_id: ${eventId}).${landedNote}`
             : `Memory added: ${JSON.stringify(data)}`) + duplicateWarning,
         }],
       };
@@ -347,7 +378,8 @@ export function register(server) {
         if (run_id) body.run_id = run_id;
         if (Object.keys(meta).length) body.metadata = meta;
         const result = await mem0Request("/v3/memories/add/", { method: "POST", body });
-        return { ...result, duplicatesFlagged };
+        const landed = await verifyLanded({ user_id, agent_id, run_id, entity_id, content });
+        return { ...result, duplicatesFlagged, landed: !!landed, landedId: landed?.id };
       }));
       const lines = results.map((r, i) => {
         const title = (items[i].content || "").split("\n")[0].slice(0, 60);
@@ -357,7 +389,8 @@ export function register(server) {
           }
           const eventId = r.value.event_id || r.value.id || "ok";
           const dupNote = r.value.duplicatesFlagged?.length ? ` ⚠ flagged as possible duplicate of ${r.value.duplicatesFlagged.join(", ")}` : "";
-          return `✓ [${i}] "${title}" — event_id: ${eventId}${dupNote}`;
+          const landedNote = r.value.landed ? ` — confirmed landed (id: ${r.value.landedId})` : ` — ⚠ could not confirm this landed, check manually`;
+          return `✓ [${i}] "${title}" — event_id: ${eventId}${dupNote}${landedNote}`;
         }
         return `✗ [${i}] "${title}" — error: ${r.reason?.message || r.reason}`;
       });
