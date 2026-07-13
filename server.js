@@ -144,7 +144,7 @@ app.use(express.json({ limit: "10mb" }));
 // (github/notion/mem0/cloudflare/auth booleans) to anyone with the URL, which
 // is free recon for an attacker probing the server. Now requires a valid key,
 // same as /mcp. /health stays open and info-free for uptime monitoring.
-app.get("/", requireAllowedIp, requireMcpKey, (_req, res) => {
+app.get("/", requireMcpKey, requireAllowedIp, (_req, res) => {
   res.json({
     status: "ok",
     service: "manufact-mcp-server",
