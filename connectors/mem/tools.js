@@ -65,17 +65,28 @@
 // already satisfies the "don't destructively overwrite" requirement, so
 // this just surfaces it in the same compact format as the other tools.
 //
-// NOTE on Tier 2 duplicate flagging (2026-07-07, Part 2 of the anti-bloat plan):
-// mem0_add/mem0_add_batch, when NOT given an entity_id (entity_id already
-// gets exact-match handling via findByEntityId/Tier 1), run a similarity
-// check via Mem0's own /v3/memories/search/ (with rerank:true for
-// precision) against the new content, scoped the same way the add is.
+// NOTE on Tier 2 duplicate flagging (2026-07-07, Part 2 of the anti-bloat plan;
+// revised 2026-07-13 to also cover new/non-matching entity_ids):
+// mem0_add/mem0_add_batch run a similarity check via Mem0's own
+// /v3/memories/search/ (with rerank:true for precision) against the new
+// content, scoped the same way the add is, whenever the call did NOT already
+// hit an exact entity_id match (an exact match short-circuits before this —
+// see findByEntityId/Tier 1 above, it refuses to add at all in that case).
+// Originally this was skipped whenever entity_id was given at all, on the
+// theory entity_id already gets exact-match protection — but a *new*
+// entity_id (one that doesn't match anything existing) got zero duplicate
+// protection under that scheme, since exact-match by definition can't catch
+// a semantic duplicate filed under a different key. That gap let a caller
+// invent a fresh entity_id for content that was really an update to an
+// existing entity, silently forking the record. Tier 2 now always runs
+// unless skip_duplicate_check is set, entity_id or not.
 // Deliberately non-blocking: unlike a true duplicate this can't be known
 // for certain without an LLM merge judgment (same reasoning as Tier 1), so
 // the memory is still added, but any candidate scoring at or above
 // duplicate_threshold (default 0.75, tunable per call) is recorded under
 // metadata.possible_duplicate_of (array of candidate IDs) and surfaced as a
-// warning in the tool response. Callers can skip the extra search call
+// warning in the tool response — check it before assuming a new entity_id
+// add didn't collide with something. Callers can skip the extra search call
 // entirely via skip_duplicate_check (e.g. for bulk/import scenarios where
 // latency matters more). mem0_list gained flagged_duplicates_only to
 // surface these for the Part 5 periodic consolidation pass; mem0_get and
@@ -277,12 +288,12 @@ export function register(server) {
       agent_id:   z.string().optional().describe("Optional agent ID for finer-grained scoping (e.g. per-project), in addition to user_id"),
       run_id:     z.string().optional().describe("Optional run/session ID for finer-grained scoping"),
       categories: z.array(z.string()).optional().describe("Optional tags to attach to this memory (e.g. ['manager.js','decisions']) — stored under metadata.tags and used for later tag-filtered list/search, since Mem0's own category classifier can't be overridden per-call"),
-      entity_id:  z.string().optional().describe("Optional stable identifier for the fact/entity this memory is about (e.g. 'bug-4', 'nexus-file-naming'). If a memory already exists with this entity_id, mem0_add will NOT create a duplicate — it returns the existing memory's id and content instead, so you can merge old + new content yourself (keeping everything not explicitly contradicted) and call mem0_update. Use this whenever you're recording an update to something you've stored before, rather than adding a fresh mem0_add call."),
+      entity_id:  z.string().optional().describe("Optional stable identifier for the fact/entity this memory is about (e.g. 'bug-4', 'nexus-file-naming'). BEFORE inventing a new one, search/list for an existing entity on the same topic — entity_id only prevents duplicates when it EXACTLY matches a string used before; a new entity_id for something that already has a different entity_id will NOT be caught by the exact-match check (though it will still get flagged by the Tier 2 similarity check below, so check the response for a possible_duplicate_of warning). If a memory already exists with this exact entity_id, mem0_add will NOT create a duplicate — it returns the existing memory's id and content instead, so you can merge old + new content yourself (keeping everything not explicitly contradicted) and call mem0_update. Use this whenever you're recording an update to something you've stored before, rather than adding a fresh mem0_add call."),
       status:     z.enum(STATUS_VALUES).optional().describe("Optional lifecycle status for this memory (open/resolved/superseded). Left unset by default. Memories marked \"superseded\" are hidden from mem0_list/mem0_search by default."),
       metadata:   z.record(z.any()).optional().describe("Optional arbitrary metadata object to attach (e.g. {project: 'manager.js'})"),
       infer:      z.boolean().optional().describe("If true, uses Mem0's LLM extraction to atomize/rephrase the content into inferred facts instead of storing it verbatim. Default: false (stores content verbatim as a 'direct import') to prevent extraction from scattering or restructuring stored memories."),
-      skip_duplicate_check: z.boolean().optional().describe("If true, skip the Tier 2 similarity check against existing memories (only relevant when no entity_id is given). Default: false — the check runs automatically. Set true for bulk/import scenarios where the extra search call's latency isn't worth it."),
-      duplicate_threshold:  z.number().optional().describe("Minimum relevance score (0-1) for an existing memory to be flagged as a possible duplicate of this one. Default: 0.75. Only used when entity_id is not given and skip_duplicate_check is false."),
+      skip_duplicate_check: z.boolean().optional().describe("If true, skip the Tier 2 similarity check against existing memories. Default: false — the check runs automatically, including when entity_id is given but doesn't exactly match anything existing (a new entity_id gets checked too, not just untagged adds). Set true for bulk/import scenarios where the extra search call's latency isn't worth it."),
+      duplicate_threshold:  z.number().optional().describe("Minimum relevance score (0-1) for an existing memory to be flagged as a possible duplicate of this one. Default: 0.75. Applies whenever skip_duplicate_check is false, regardless of entity_id."),
     },
     async ({ content, user_id = MEM0_USER_ID, agent_id, run_id, categories, entity_id, status, metadata, infer = false, skip_duplicate_check = false, duplicate_threshold = 0.75 }) => {
       if (entity_id) {
@@ -305,7 +316,11 @@ export function register(server) {
       if (categories?.length) meta.tags = categories;
       if (entity_id) meta.entity_id = entity_id;
       if (status) meta.status = status;
-      if (!entity_id && !skip_duplicate_check) {
+      // Runs regardless of entity_id now — see the Tier 2 NOTE above. An
+      // exact entity_id match already returned early, so reaching here with
+      // entity_id set means it's a *new* entity_id, which still needs this
+      // semantic check the same as an untagged add would.
+      if (!skip_duplicate_check) {
         const candidates = await findPossibleDuplicates({ user_id, agent_id, run_id, content, threshold: duplicate_threshold });
         if (candidates.length) {
           meta.possible_duplicate_of = candidates.map((c) => c.id);
@@ -369,7 +384,9 @@ export function register(server) {
         if (entity_id) meta.entity_id = entity_id;
         if (status) meta.status = status;
         let duplicatesFlagged = null;
-        if (!entity_id && !skip_duplicate_check) {
+        // See Tier 2 NOTE above — runs regardless of entity_id, since a *new*
+        // entity_id needs semantic dup protection just as much as an untagged add.
+        if (!skip_duplicate_check) {
           const candidates = await findPossibleDuplicates({ user_id, agent_id, run_id, content, threshold: duplicate_threshold });
           if (candidates.length) {
             meta.possible_duplicate_of = candidates.map((c) => c.id);
