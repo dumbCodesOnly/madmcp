@@ -91,6 +91,16 @@
 // latency matters more). mem0_list gained flagged_duplicates_only to
 // surface these for the Part 5 periodic consolidation pass; mem0_get and
 // compactLine both show a "⚠dup" indicator when the flag is present.
+//
+// REVISED 2026-07-13 (insert-reliability step of the anti-bloat plan rev 2):
+// "deliberately non-blocking" above is now only true in the 0.75–0.92 range.
+// A candidate scoring >= BLOCKING_DUPLICATE_THRESHOLD (0.92) is treated as a
+// near-certain duplicate and hard-blocks the add, the same way an exact
+// entity_id match does — the caller gets the existing memory's id + content
+// back and is expected to merge + mem0_update instead. This applies in both
+// mem0_add and mem0_add_batch. skip_duplicate_check still bypasses Tier 2
+// entirely (including this block), for callers who've already judged the
+// content distinct.
 // ---------------------------------------------------------------------------
 
 import { z } from "zod";
@@ -98,6 +108,14 @@ import { mem0Request } from "./client.js";
 import { MEM0_USER_ID } from "../../config.js";
 
 const STATUS_VALUES = ["open", "resolved", "superseded"];
+// Hard-stop threshold for Tier 2 duplicate detection (2026-07-13, insert-
+// reliability step of the anti-bloat plan rev 2): a candidate scoring at or
+// above this is treated as a near-certain duplicate and blocks the add
+// entirely, same as an exact entity_id match. Below this and down to a
+// call's duplicate_threshold (default 0.75), candidates are still flagged
+// but non-blocking, since that range isn't reliably a true duplicate
+// without an LLM merge judgment.
+const BLOCKING_DUPLICATE_THRESHOLD = 0.92;
 
 // Compact one-line formatter shared by list/search to keep token usage low.
 function compactLine(m, { showScore = false } = {}) {
@@ -139,16 +157,27 @@ function filterFlaggedDuplicates(memories, flaggedOnly) {
 }
 
 // Look for an existing memory tagged with this entity_id, scoped the same
-// way the add call would be. Scans up to 100 most recent memories in scope —
-// good enough for a per-project/per-bug entity_id namespace; not a substitute
-// for a real indexed lookup if this scope ever gets huge.
+// way the add call would be. Paginates through up to 1000 most recent
+// memories in scope (10 pages of 100) rather than only the first 100 —
+// fixed 2026-07-13 (insert-reliability step of the anti-bloat plan rev 2)
+// after the single-page version was found to miss entity_ids on older
+// memories once a scope grew past 100. Still not a substitute for a real
+// indexed lookup if a scope grows past ~1000 — revisit via D1/graph-DB
+// migration (previously rejected, not permanently) if that ever happens.
 async function findByEntityId({ user_id, agent_id, run_id, entity_id }) {
   const filters = { user_id };
   if (agent_id) filters.agent_id = agent_id;
   if (run_id) filters.run_id = run_id;
-  const data = await mem0Request("/v3/memories/", { method: "POST", body: { filters, page: 1, page_size: 100 } });
-  const memories = data.results || data.memories || data || [];
-  return memories.find((m) => m.metadata?.entity_id === entity_id) || null;
+  const PAGE_SIZE = 100;
+  const MAX_PAGES = 10;
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const data = await mem0Request("/v3/memories/", { method: "POST", body: { filters, page, page_size: PAGE_SIZE } });
+    const memories = data.results || data.memories || data || [];
+    const match = memories.find((m) => m.metadata?.entity_id === entity_id);
+    if (match) return match;
+    if (memories.length < PAGE_SIZE) break; // reached the last page
+  }
+  return null;
 }
 
 // Tier 2: search for existing memories similar to new content (used when no
@@ -293,7 +322,7 @@ export function register(server) {
       metadata:   z.record(z.any()).optional().describe("Optional arbitrary metadata object to attach (e.g. {project: 'manager.js'})"),
       infer:      z.boolean().optional().describe("If true, uses Mem0's LLM extraction to atomize/rephrase the content into inferred facts instead of storing it verbatim. Default: false (stores content verbatim as a 'direct import') to prevent extraction from scattering or restructuring stored memories."),
       skip_duplicate_check: z.boolean().optional().describe("If true, skip the Tier 2 similarity check against existing memories. Default: false — the check runs automatically, including when entity_id is given but doesn't exactly match anything existing (a new entity_id gets checked too, not just untagged adds). Set true for bulk/import scenarios where the extra search call's latency isn't worth it."),
-      duplicate_threshold:  z.number().optional().describe("Minimum relevance score (0-1) for an existing memory to be flagged as a possible duplicate of this one. Default: 0.75. Applies whenever skip_duplicate_check is false, regardless of entity_id."),
+      duplicate_threshold:  z.number().optional().describe("Minimum relevance score (0-1) for an existing memory to be flagged as a possible duplicate of this one. Default: 0.75. Applies whenever skip_duplicate_check is false, regardless of entity_id. Note: regardless of this value, a candidate scoring >= 0.92 hard-blocks the add entirely (same as an exact entity_id match) rather than just flagging — see mem0_add's description."),
     },
     async ({ content, user_id = MEM0_USER_ID, agent_id, run_id, categories, entity_id, status, metadata, infer = false, skip_duplicate_check = false, duplicate_threshold = 0.75 }) => {
       if (entity_id) {
@@ -322,6 +351,20 @@ export function register(server) {
       // semantic check the same as an untagged add would.
       if (!skip_duplicate_check) {
         const candidates = await findPossibleDuplicates({ user_id, agent_id, run_id, content, threshold: duplicate_threshold });
+        const blocking = candidates.filter((c) => c.score >= BLOCKING_DUPLICATE_THRESHOLD);
+        if (blocking.length) {
+          const top = blocking[0];
+          return {
+            content: [{
+              type: "text",
+              text:
+                `Not adding — content is near-identical (score ${top.score.toFixed(2)} >= ${BLOCKING_DUPLICATE_THRESHOLD}) to existing memory ${top.id}. Hard-blocked, same as an exact entity_id match — no duplicate was created.\n\n` +
+                `Existing content:\n${top.memory || top.text || "(no content)"}\n\n` +
+                `New content you were about to add:\n${content}\n\n` +
+                `Next step: merge these two yourself — keep everything from the existing content that the new content doesn't explicitly contradict — then call mem0_update with memory_id="${top.id}" and the merged text. If this really is distinct content despite the score, retry with skip_duplicate_check:true.`,
+            }],
+          };
+        }
         if (candidates.length) {
           meta.possible_duplicate_of = candidates.map((c) => c.id);
           duplicateWarning =
@@ -388,6 +431,11 @@ export function register(server) {
         // entity_id needs semantic dup protection just as much as an untagged add.
         if (!skip_duplicate_check) {
           const candidates = await findPossibleDuplicates({ user_id, agent_id, run_id, content, threshold: duplicate_threshold });
+          const blocking = candidates.filter((c) => c.score >= BLOCKING_DUPLICATE_THRESHOLD);
+          if (blocking.length) {
+            const top = blocking[0];
+            return { skipped: true, blocked: true, existingId: top.id, existingScore: top.score, existingContent: top.memory || top.text || "(no content)" };
+          }
           if (candidates.length) {
             meta.possible_duplicate_of = candidates.map((c) => c.id);
             duplicatesFlagged = candidates.map((c) => c.id);
@@ -405,6 +453,9 @@ export function register(server) {
         const title = (items[i].content || "").split("\n")[0].slice(0, 60);
         if (r.status === "fulfilled") {
           if (r.value?.skipped) {
+            if (r.value.blocked) {
+              return `⛔ [${i}] "${title}" — blocked, near-identical (score ${r.value.existingScore.toFixed(2)}) to existing memory (id: ${r.value.existingId}). No duplicate created. Merge and call mem0_update yourself if this content adds anything new.`;
+            }
             return `⏭ [${i}] "${title}" — skipped, entity_id "${r.value.entity_id}" already exists (id: ${r.value.existingId}). Merge and call mem0_update yourself if this content adds anything new.`;
           }
           const eventId = r.value.event_id || r.value.id || "ok";
