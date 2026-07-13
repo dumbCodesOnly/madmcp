@@ -25,3 +25,16 @@ export const CLOUDFLARE_API        = "https://api.cloudflare.com/client/v4";
 // If unset, the endpoint remains open (legacy behavior) — set this in
 // production so your tokens/connectors aren't usable by anyone with the URL.
 export const MCP_SHARED_KEY = process.env.MCP_SHARED_KEY;
+
+// IP allowlist for /mcp, /mcp/:key, and /. Restricts inbound requests to
+// known client CIDR ranges regardless of whether the shared key is valid,
+// so a leaked key alone isn't enough to reach the server.
+// Defaults ON, and defaults to Anthropic's published outbound range for
+// Claude connector traffic (https://claude.com/docs/connectors/building/authentication).
+// Add more ranges (e.g. for OpenAI/GPT actions) as a comma-separated list.
+// Set IP_ALLOWLIST_ENABLED=false to disable entirely (e.g. for local dev).
+export const IP_ALLOWLIST_ENABLED = process.env.IP_ALLOWLIST_ENABLED !== "false";
+export const ALLOWED_IP_RANGES = (process.env.ALLOWED_IP_RANGES || "160.79.104.0/21")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
