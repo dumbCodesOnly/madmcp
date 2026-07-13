@@ -299,6 +299,136 @@ async function findByEntityId({ user_id, agent_id, run_id, entity_id }) {
   return null;
 }
 
+// Same lookup as findByEntityId but scoped to user_id only (no agent_id/
+// run_id filter) — used as the cross-scope fallback when a relation target
+// doesn't resolve within the caller's own agent_id/run_id scope, so a
+// cross-scope relation can still be found and correctly labeled rather than
+// reported as missing. Same pagination caveat as findByEntityId.
+async function findByEntityIdAnyScope({ user_id, entity_id }) {
+  const filters = { user_id };
+  const PAGE_SIZE = 100;
+  const MAX_PAGES = 10;
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const data = await mem0Request("/v3/memories/", { method: "POST", body: { filters, page, page_size: PAGE_SIZE } });
+    const memories = data.results || data.memories || data || [];
+    const match = memories.find((m) => m.metadata?.entity_id === entity_id);
+    if (match) return match;
+    if (memories.length < PAGE_SIZE) break;
+  }
+  return null;
+}
+
+// NEW helper (not a reuse of findByEntityId) — relations are stored
+// one-directional on the SOURCE memory's metadata.relations array, so
+// finding "who points at entity_id X" requires scanning every memory in
+// scope for a relations entry whose to_entity_id matches, rather than a
+// single direct lookup. Returns [{ fromEntityId, fromId, relation }, ...].
+// Same ~1000-memory-per-scope pagination ceiling as findByEntityId.
+async function findReferencingEntities({ user_id, agent_id, run_id, entity_id }) {
+  const filters = { user_id };
+  if (agent_id) filters.agent_id = agent_id;
+  if (run_id) filters.run_id = run_id;
+  const PAGE_SIZE = 100;
+  const MAX_PAGES = 10;
+  const referencing = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const data = await mem0Request("/v3/memories/", { method: "POST", body: { filters, page, page_size: PAGE_SIZE } });
+    const memories = data.results || data.memories || data || [];
+    for (const m of memories) {
+      const rels = Array.isArray(m.metadata?.relations) ? m.metadata.relations : [];
+      for (const rel of rels) {
+        if (rel.to_entity_id === entity_id) {
+          referencing.push({ fromEntityId: m.metadata?.entity_id || m.id, fromId: m.id, relation: rel.relation });
+        }
+      }
+    }
+    if (memories.length < PAGE_SIZE) break;
+  }
+  return referencing;
+}
+
+// Resolves a stored relation's to_entity_id into one of four outcomes
+// instead of a blank/not-found result:
+//   "ok"            — resolves within the caller's own scope
+//   "wrong_scope"   — resolves, but only outside the caller's agent_id/run_id
+//                     (found via findByEntityIdAnyScope)
+//   "deleted"       — does NOT resolve anywhere now, but resolved_at_write
+//                     was true — i.e. it existed when this relation was
+//                     written and has since been removed. Detected at
+//                     resolve-time by comparing against that stored bit,
+//                     not by any proactive delete-time tracking (matches
+//                     the plan's decision to keep the delete path itself
+//                     free of extra scans/writes).
+//   "never_existed" — does NOT resolve anywhere now, and resolved_at_write
+//                     was already false at write time (or absent, for
+//                     relations written before this bit existed).
+async function resolveRelationTarget({ to_entity_id, resolved_at_write, user_id, agent_id, run_id }) {
+  const inScope = await findByEntityId({ user_id, agent_id, run_id, entity_id: to_entity_id });
+  if (inScope) return { status: "ok", memory: inScope };
+  const crossScope = await findByEntityIdAnyScope({ user_id, entity_id: to_entity_id });
+  if (crossScope) {
+    const scopeLabel = crossScope.agent_id || crossScope.run_id
+      ? [crossScope.agent_id && `agent_id=${crossScope.agent_id}`, crossScope.run_id && `run_id=${crossScope.run_id}`].filter(Boolean).join(", ")
+      : "different scope";
+    return { status: "wrong_scope", memory: crossScope, scopeLabel };
+  }
+  return { status: resolved_at_write ? "deleted" : "never_existed" };
+}
+
+// Cycle-safe BFS over relations, both directions:
+//   outgoing — this entity's own memory.metadata.relations
+//   incoming — findReferencingEntities(this entity_id)
+// Visited-set is mandatory: a cycle (A blocks B, B blocks C, C blocks A)
+// would otherwise infinite-loop a traversal with no depth cap on revisits.
+// Depth defaults to 3 per the plan's 3-hop minimum. Returns a flat list of
+// edges: { from, to, relation, direction, hop, status, scopeLabel? }.
+async function traverseRelations(startEntityId, { user_id, agent_id, run_id, depth = RELATION_TRAVERSAL_DEPTH }) {
+  const start = normalizeEntityId(startEntityId);
+  const visited = new Set([start]);
+  const queue = [{ entityId: start, hop: 0 }];
+  const edges = [];
+  while (queue.length) {
+    const { entityId, hop } = queue.shift();
+    if (hop >= depth) continue;
+    const ownMemory = await findByEntityId({ user_id, agent_id, run_id, entity_id: entityId });
+    const outgoing = Array.isArray(ownMemory?.metadata?.relations) ? ownMemory.metadata.relations : [];
+    for (const rel of outgoing) {
+      const resolution = await resolveRelationTarget({ to_entity_id: rel.to_entity_id, resolved_at_write: rel.resolved_at_write, user_id, agent_id, run_id });
+      edges.push({ from: entityId, to: rel.to_entity_id, relation: rel.relation, direction: "outgoing", hop: hop + 1, status: resolution.status, scopeLabel: resolution.scopeLabel });
+      if (resolution.status === "ok" && !visited.has(rel.to_entity_id)) {
+        visited.add(rel.to_entity_id);
+        queue.push({ entityId: rel.to_entity_id, hop: hop + 1 });
+      }
+    }
+    const referencing = await findReferencingEntities({ user_id, agent_id, run_id, entity_id: entityId });
+    for (const ref of referencing) {
+      edges.push({ from: ref.fromEntityId, to: entityId, relation: ref.relation, direction: "incoming", hop: hop + 1, status: "ok" });
+      if (!visited.has(ref.fromEntityId)) {
+        visited.add(ref.fromEntityId);
+        queue.push({ entityId: ref.fromEntityId, hop: hop + 1 });
+      }
+    }
+  }
+  return edges;
+}
+
+// Compact renderer shared by mem0_get and mem0_search/mem0_list. Labels
+// each unresolved reference with its specific reason per resolveRelationTarget
+// (never_existed / deleted / wrong_scope) instead of a silent blank.
+function formatRelatedEntities(edges) {
+  if (!edges.length) return "";
+  const lines = edges.map((e) => {
+    const arrow = e.direction === "outgoing" ? "→" : "←";
+    const other = e.direction === "outgoing" ? e.to : e.from;
+    let suffix = "";
+    if (e.status === "deleted") suffix = " (deleted)";
+    else if (e.status === "never_existed") suffix = " (not found)";
+    else if (e.status === "wrong_scope") suffix = ` (different scope: ${e.scopeLabel})`;
+    return `  [hop ${e.hop}] ${e.relation} ${arrow} ${other}${suffix}`;
+  });
+  return `Related entities (up to ${RELATION_TRAVERSAL_DEPTH} hops):\n${lines.join("\n")}`;
+}
+
 // Tier 2: search for existing memories similar to new content (used when no
 // entity_id was given, since entity_id already gets exact-match handling
 // above). Uses Mem0's own hybrid search with reranking for precision rather
