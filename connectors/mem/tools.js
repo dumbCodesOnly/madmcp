@@ -327,7 +327,10 @@ async function findByEntityId({ user_id, agent_id, run_id, entity_id }) {
 // run_id filter) — used as the cross-scope fallback when a relation target
 // doesn't resolve within the caller's own agent_id/run_id scope, so a
 // cross-scope relation can still be found and correctly labeled rather than
-// reported as missing. Same pagination caveat as findByEntityId.
+// reported as missing. Same pagination caveat as findByEntityId, and same
+// single-get re-fetch on match (fetchSingleForMetadata) — see the REGRESSION
+// FIX note above findByEntityId; without it, a cross-scope match's relations
+// would be just as untrustworthy as an in-scope one.
 async function findByEntityIdAnyScope({ user_id, entity_id }) {
   const filters = { user_id };
   const PAGE_SIZE = 100;
@@ -336,7 +339,7 @@ async function findByEntityIdAnyScope({ user_id, entity_id }) {
     const data = await mem0Request("/v3/memories/", { method: "POST", body: { filters, page, page_size: PAGE_SIZE } });
     const memories = data.results || data.memories || data || [];
     const match = memories.find((m) => m.metadata?.entity_id === entity_id);
-    if (match) return match;
+    if (match) return await fetchSingleForMetadata(match);
     if (memories.length < PAGE_SIZE) break;
   }
   return null;
