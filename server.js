@@ -82,8 +82,23 @@ function getClientIp(req) {
   return normalizeIp(raw || "");
 }
 
+// Detects an MCP `initialize` request (single or batched). `initialize` only
+// negotiates protocol version/capabilities and returns serverInfo — it never
+// touches tools, resources, or connector data — so it's safe to exempt from
+// both the IP allowlist and the shared-key check below. This exists because
+// the deploy platform's own post-deploy verification POSTs a real initialize
+// call directly to /mcp (not /health) from a source IP that isn't stable
+// across deploys, so hardcoding specific /32s for it is a losing game.
+function isInitializeRequest(req) {
+  const body = req.body;
+  if (!body) return false;
+  if (Array.isArray(body)) return body.length > 0 && body.every((m) => m && m.method === "initialize");
+  return body.method === "initialize";
+}
+
 function requireAllowedIp(req, res, next) {
   if (!IP_ALLOWLIST_ENABLED) return next();
+  if (isInitializeRequest(req)) return next();
   const ip = getClientIp(req);
   const allowed = ip && ALLOWED_IP_RANGES.some((cidr) => isIpInCidr(ip, cidr));
   if (allowed) return next();
@@ -101,6 +116,7 @@ function requireAllowedIp(req, res, next) {
 // Prefer the header for any client that does support it.
 function requireMcpKey(req, res, next) {
   if (!MCP_SHARED_KEY) return next();
+  if (isInitializeRequest(req)) return next();
   const headerKey = req.get("x-manufact-key");
   const pathKey   = req.params.key;
   if ((headerKey && safeEqual(headerKey, MCP_SHARED_KEY)) || (pathKey && safeEqual(pathKey, MCP_SHARED_KEY))) {
