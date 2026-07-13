@@ -878,7 +878,7 @@ export function register(server) {
   // Mutually exclusive with `content`: pick one mode per call.
   server.tool(
     "mem0_update",
-    "Update an existing Mem0 memory by ID: replace its content (in full, or via targeted find/replace edits), change its status, change its relations, clear a stale possible_duplicate_of flag, or any combination. At least one of content/replacements/status/relations/clear_duplicate_flag must be given. `content` and `replacements` are mutually exclusive — use `replacements` for small edits to avoid resending the whole memory body.",
+    "Update an existing Mem0 memory by ID: replace its content (in full, or via targeted find/replace edits), change its status, change its relations, patch or delete arbitrary metadata keys, or any combination. At least one of content/replacements/status/relations/metadata_patch/metadata_delete_keys/clear_duplicate_flag must be given. `content` and `replacements` are mutually exclusive — use `replacements` for small edits to avoid resending the whole memory body.",
     {
       memory_id: z.string().describe("The memory ID to update"),
       content:   z.string().optional().describe("New content for the memory (replaces existing content in full). Omit to change only the status, or use `replacements` for a targeted edit instead. Mutually exclusive with `replacements`."),
@@ -891,12 +891,16 @@ export function register(server) {
         to_entity_id: z.string().describe("The entity_id of the other entity this one relates to"),
         relation: z.string().describe("The relation type — see mem0_add's relations param."),
       })).optional().describe("New relations for this memory's entity — REPLACES the existing metadata.relations array whole (not merged). Omit to leave relations unchanged. Canonicalized the same way as mem0_add's relations param. Pass an empty array to clear all relations."),
-      clear_duplicate_flag: z.boolean().optional().describe("If true, removes metadata.possible_duplicate_of from this memory — use this during a Part-5 consolidation pass when a flagged candidate turns out NOT to be a real duplicate (false positive) or references an ID that no longer exists. There was previously no way to clear this flag; without it, a false-positive stays visible in mem0_list's flagged_duplicates_only forever."),
+      metadata_patch: z.record(z.any()).optional().describe("Arbitrary metadata keys to merge into this memory's existing metadata (shallow merge — each key you supply overwrites that key only, everything else in metadata is preserved). Use this to add/fix a custom field without knowing or resending the whole metadata object. Applied before metadata_delete_keys if both are given."),
+      metadata_delete_keys: z.array(z.string()).optional().describe("Arbitrary metadata keys to remove outright from this memory (e.g. ['possible_duplicate_of'] to clear a stale Tier-2 duplicate flag during a Part-5 consolidation pass, or any other custom key that no longer applies). Applied after metadata_patch, so a key can be patched and then deleted in the same call if that's ever useful, though normally you'd only use one or the other for a given key."),
+      clear_duplicate_flag: z.boolean().optional().describe("Shorthand for metadata_delete_keys including 'possible_duplicate_of' — kept for convenience/back-compat. Equivalent to adding 'possible_duplicate_of' to metadata_delete_keys."),
     },
-    async ({ memory_id, content, replacements, status, relations, clear_duplicate_flag }) => {
-      if (content === undefined && replacements === undefined && status === undefined && relations === undefined && !clear_duplicate_flag) {
+    async ({ memory_id, content, replacements, status, relations, metadata_patch, metadata_delete_keys, clear_duplicate_flag }) => {
+      const deleteKeys = new Set(metadata_delete_keys || []);
+      if (clear_duplicate_flag) deleteKeys.add("possible_duplicate_of");
+      if (content === undefined && replacements === undefined && status === undefined && relations === undefined && metadata_patch === undefined && deleteKeys.size === 0) {
         return {
-          content: [{ type: "text", text: "Nothing to update — provide content, replacements, status, relations, or clear_duplicate_flag." }],
+          content: [{ type: "text", text: "Nothing to update — provide content, replacements, status, relations, metadata_patch, metadata_delete_keys, or clear_duplicate_flag." }],
           isError: true,
         };
       }
@@ -939,8 +943,8 @@ export function register(server) {
         metadataUpdates.relations = cleanedRelations;
         relationWarnings = warnings;
       }
-      const finalMetadata = { ...current.metadata, ...metadataUpdates };
-      if (clear_duplicate_flag) delete finalMetadata.possible_duplicate_of;
+      const finalMetadata = { ...current.metadata, ...metadataUpdates, ...metadata_patch };
+      for (const key of deleteKeys) delete finalMetadata[key];
       const body = { text: finalText };
       if (Object.keys(finalMetadata).length) body.metadata = finalMetadata;
       const data = await mem0Request(`/v1/memories/${memory_id}/`, { method: "PUT", body });
@@ -949,7 +953,8 @@ export function register(server) {
       if (replacements !== undefined) parts.push(`${replacements.length} targeted edit${replacements.length === 1 ? "" : "s"} applied`);
       if (status !== undefined) parts.push(`status set to "${status}"`);
       if (relations !== undefined) parts.push(`relations replaced (${metadataUpdates.relations.length} stored)`);
-      if (clear_duplicate_flag) parts.push("possible_duplicate_of cleared");
+      if (metadata_patch !== undefined) parts.push(`metadata patched (${Object.keys(metadata_patch).join(", ")})`);
+      if (deleteKeys.size) parts.push(`metadata keys removed (${[...deleteKeys].join(", ")})`);
       const relationNote = relationWarnings.length ? `\n\n⚠ Relations:\n${relationWarnings.map((w) => `  ${w}`).join("\n")}` : "";
       return { content: [{ type: "text", text: `Updated memory (ID: ${data.id || memory_id}) — ${parts.join(", ")}.\nUpdated: ${data.updated_at?.slice(0, 10) || "unknown"}${relationNote}` }] };
     }
