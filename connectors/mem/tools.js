@@ -523,11 +523,17 @@ export function register(server) {
       const status = m.metadata?.status ? `\nStatus: ${m.metadata.status}` : "";
       const dup = Array.isArray(m.metadata?.possible_duplicate_of) && m.metadata.possible_duplicate_of.length ? `\nPossible duplicate of: ${m.metadata.possible_duplicate_of.join(", ")}` : "";
       const meta = m.metadata && Object.keys(m.metadata).length ? `\n\nMetadata:\n${JSON.stringify(m.metadata, null, 2)}` : "";
+      let relatedSection = "";
+      if (m.metadata?.entity_id) {
+        const edges = await traverseRelations(m.metadata.entity_id, { user_id: m.user_id || MEM0_USER_ID, agent_id: m.agent_id, run_id: m.run_id });
+        const rendered = formatRelatedEntities(edges);
+        if (rendered) relatedSection = `\n\n${rendered}`;
+      }
       const text =
         `ID: ${m.id}\n` +
         `Created: ${m.created_at?.slice(0, 10) || "unknown"} | Updated: ${m.updated_at?.slice(0, 10) || "unknown"}${cats}${tags}${eid}${status}${dup}\n\n` +
         (m.memory || m.text || "(no content)") +
-        meta;
+        meta + relatedSection;
       return { content: [{ type: "text", text }] };
     }
   );
