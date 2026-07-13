@@ -1,4 +1,4 @@
-# github-mcp-server
+# mad-mcp-server
 
 An MCP server that gives Claude (or any MCP client) the ability to read and
 write files in your GitHub repositories — so code can be pushed directly
