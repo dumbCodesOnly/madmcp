@@ -4,6 +4,8 @@
 // ---------------------------------------------------------------------------
 
 import express from "express";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
@@ -40,11 +42,13 @@ function safeEqual(a, b) {
   return mismatch === 0;
 }
 
+// Header-only auth. The key must never be passed in the URL path/query —
+// paths get written to proxy logs, browser history, and Referer headers,
+// which turns a shared secret into something that leaks by default.
 function requireMcpKey(req, res, next) {
   if (!MCP_SHARED_KEY) return next();
   const headerKey = req.get("x-manufact-key");
-  const pathKey   = req.params.key;
-  if ((headerKey && safeEqual(headerKey, MCP_SHARED_KEY)) || (pathKey && safeEqual(pathKey, MCP_SHARED_KEY))) {
+  if (headerKey && safeEqual(headerKey, MCP_SHARED_KEY)) {
     return next();
   }
   res.status(401).json({
@@ -54,12 +58,31 @@ function requireMcpKey(req, res, next) {
   });
 }
 
+// Rate limit /mcp so a leaked or guessed key (or a brute-force attempt
+// against requireMcpKey) can't hammer the GitHub/Cloudflare/Notion APIs
+// sitting behind this server.
+const mcpLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    jsonrpc: "2.0",
+    error: { code: -32029, message: "Too many requests, slow down." },
+    id: null,
+  },
+});
+
 const app = express();
+app.use(helmet());
 // Raise body size limit from the 100kb default to 10mb so that push_files
 // and create_or_update_file can handle large source files without truncation.
 app.use(express.json({ limit: "10mb" }));
 
-app.get("/", (_req, res) => {
+// Gated: this used to leak which connectors were configured (github/notion/
+// mem0/cloudflare/auth booleans) to anyone who hit the URL, which is free
+// recon for an attacker probing the server. Now requires the same key as /mcp.
+app.get("/", requireMcpKey, (_req, res) => {
   res.json({
     status: "ok",
     service: "manufact-mcp-server",
@@ -90,8 +113,7 @@ async function handleMcp(req, res) {
   }
 }
 
-app.post("/mcp", requireMcpKey, handleMcp);
-app.post("/mcp/:key", requireMcpKey, handleMcp);
+app.post("/mcp", mcpLimiter, requireMcpKey, handleMcp);
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
