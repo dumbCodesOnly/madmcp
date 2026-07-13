@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // server.js — HTTP server + MCP bootstrap only.
-// To add a new connector: create connectors/<name>/tools.js and register below.
+// To add a new connector: create connectors/<n>/tools.js and register below.
 // ---------------------------------------------------------------------------
 
 import express from "express";
@@ -42,9 +42,9 @@ function safeEqual(a, b) {
   return mismatch === 0;
 }
 
-// Header-only auth. The key must never be passed in the URL path/query —
-// paths get written to proxy logs, browser history, and Referer headers,
-// which turns a shared secret into something that leaks by default.
+// Header-only auth. (Previously also accepted the key as a URL path segment
+// via /mcp/:key — removed because URLs end up in proxy/CDN/browser logs,
+// which is a much bigger leak surface than a header.)
 function requireMcpKey(req, res, next) {
   if (!MCP_SHARED_KEY) return next();
   const headerKey = req.get("x-manufact-key");
@@ -58,17 +58,18 @@ function requireMcpKey(req, res, next) {
   });
 }
 
-// Rate limit /mcp so a leaked or guessed key (or a brute-force attempt
-// against requireMcpKey) can't hammer the GitHub/Cloudflare/Notion APIs
-// sitting behind this server.
+// Rate limit auth attempts / tool calls on /mcp so a leaked or guessed key
+// can't be used to hammer GitHub/Cloudflare/etc, and the key itself can't be
+// brute-forced freely. Applied before requireMcpKey so failed-auth attempts
+// count against the limit too.
 const mcpLimiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 30,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
     jsonrpc: "2.0",
-    error: { code: -32029, message: "Too many requests, slow down." },
+    error: { code: -32000, message: "Rate limit exceeded. Try again shortly." },
     id: null,
   },
 });
@@ -79,9 +80,10 @@ app.use(helmet());
 // and create_or_update_file can handle large source files without truncation.
 app.use(express.json({ limit: "10mb" }));
 
-// Gated: this used to leak which connectors were configured (github/notion/
-// mem0/cloudflare/auth booleans) to anyone who hit the URL, which is free
-// recon for an attacker probing the server. Now requires the same key as /mcp.
+// Gated behind auth: previously exposed which connectors were configured
+// (github/notion/mem0/cloudflare/auth booleans) to anyone with the URL, which
+// is free recon for an attacker probing the server. Now requires a valid key,
+// same as /mcp. /health stays open and info-free for uptime monitoring.
 app.get("/", requireMcpKey, (_req, res) => {
   res.json({
     status: "ok",
@@ -122,5 +124,5 @@ app.listen(PORT, () => {
   if (!NOTION_TOKEN)   console.warn("WARNING: NOTION_TOKEN is not set. Notion tools will fail.");
   if (!MEM0_API_KEY)   console.warn("WARNING: MEM0_API_KEY is not set. Mem0 tools will fail.");
   if (!CLOUDFLARE_API_TOKEN || !CLOUDFLARE_ACCOUNT_ID) console.warn("WARNING: CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID not set. Cloudflare tools will fail.");
-  if (!MCP_SHARED_KEY) console.warn("WARNING: MCP_SHARED_KEY is not set. The /mcp endpoint is OPEN to anyone who has the URL.");
+  if (!MCP_SHARED_KEY) console.warn("WARNING: MCP_SHARED_KEY is not set. The /mcp and / endpoints are OPEN to anyone who has the URL.");
 });
