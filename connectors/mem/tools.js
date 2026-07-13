@@ -450,32 +450,77 @@ export function register(server) {
   );
 
   // ── Update memory ────────────────────────────────────────────────────────
+  // NOTE on `replacements` (2026-07-13): mem0_update previously only
+  // supported a full-content replace, which meant any edit — even a
+  // one-clause fix — required the caller to regenerate and resend the
+  // entire memory body. Mem0's own PUT /v1/memories/{id}/ endpoint is a
+  // full replace with no field/substring PATCH, so a GET+PUT round trip is
+  // unavoidable either way — but the *caller-side* cost of reproducing the
+  // whole document was the real bottleneck, not the API call count. This
+  // mirrors the github connector's str_replace_file: send only find/replace
+  // pairs, apply them to the fetched current content, PUT the result. Each
+  // `find` must appear exactly once in the current content (same safety
+  // rule as str_replace_file) — ambiguous or missing matches fail loudly
+  // rather than silently no-op'ing or replacing the wrong occurrence.
+  // Mutually exclusive with `content`: pick one mode per call.
   server.tool(
     "mem0_update",
-    "Update an existing Mem0 memory by ID: replace its content, change its status, or both. At least one of content/status must be given.",
+    "Update an existing Mem0 memory by ID: replace its content (in full, or via targeted find/replace edits), change its status, or both. At least one of content/replacements/status must be given. `content` and `replacements` are mutually exclusive — use `replacements` for small edits to avoid resending the whole memory body.",
     {
       memory_id: z.string().describe("The memory ID to update"),
-      content:   z.string().optional().describe("New content for the memory (replaces existing content). Omit to change only the status."),
+      content:   z.string().optional().describe("New content for the memory (replaces existing content in full). Omit to change only the status, or use `replacements` for a targeted edit instead. Mutually exclusive with `replacements`."),
+      replacements: z.array(z.object({
+        find:    z.string().describe("Exact string to find in the current memory content — must appear exactly once"),
+        replace: z.string().describe("String to replace it with"),
+      })).optional().describe("List of find-and-replace operations to apply sequentially to the memory's current content, without resending the full body. Each `find` must match exactly once in the content at the time it's applied (fails loudly on zero or multiple matches, same rule as the github str_replace_file tool). Mutually exclusive with `content`."),
       status:    z.enum(STATUS_VALUES).optional().describe("New lifecycle status (open/resolved/superseded) for this memory. Omit to leave status unchanged. Existing tags/entity_id/other metadata are preserved regardless."),
     },
-    async ({ memory_id, content, status }) => {
-      if (content === undefined && status === undefined) {
+    async ({ memory_id, content, replacements, status }) => {
+      if (content === undefined && replacements === undefined && status === undefined) {
         return {
-          content: [{ type: "text", text: "Nothing to update — provide content, status, or both." }],
+          content: [{ type: "text", text: "Nothing to update — provide content, replacements, status, or a combination of replacements and status." }],
+          isError: true,
+        };
+      }
+      if (content !== undefined && replacements !== undefined) {
+        return {
+          content: [{ type: "text", text: "Provide either content or replacements, not both — they're mutually exclusive update modes." }],
           isError: true,
         };
       }
       // Mem0's PUT replaces the whole metadata object, so fetch current
       // metadata first and merge in the status change client-side, rather
-      // than risk wiping out tags/entity_id set at add-time.
+      // than risk wiping out tags/entity_id set at add-time. This fetch also
+      // supplies the base text that `replacements` is applied against.
       const current = await mem0Request(`/v1/memories/${memory_id}/`);
-      const finalText = content !== undefined ? content : (current.memory || current.text || "");
+      let finalText = current.memory || current.text || "";
+      if (content !== undefined) {
+        finalText = content;
+      } else if (replacements !== undefined) {
+        for (const { find, replace } of replacements) {
+          const count = finalText.split(find).length - 1;
+          if (count === 0) {
+            return {
+              content: [{ type: "text", text: `Update aborted, nothing written — "${find.slice(0, 60)}${find.length > 60 ? "…" : ""}" was not found in the current memory content. Content may have changed since you last read it — re-fetch with mem0_get and retry.` }],
+              isError: true,
+            };
+          }
+          if (count > 1) {
+            return {
+              content: [{ type: "text", text: `Update aborted, nothing written — "${find.slice(0, 60)}${find.length > 60 ? "…" : ""}" appears ${count} times in the current memory content, but must be unique. Include more surrounding context in "find" to disambiguate.` }],
+              isError: true,
+            };
+          }
+          finalText = finalText.replace(find, replace);
+        }
+      }
       const finalMetadata = { ...current.metadata, ...(status !== undefined ? { status } : {}) };
       const body = { text: finalText };
       if (Object.keys(finalMetadata).length) body.metadata = finalMetadata;
       const data = await mem0Request(`/v1/memories/${memory_id}/`, { method: "PUT", body });
       const parts = [];
-      if (content !== undefined) parts.push("content updated");
+      if (content !== undefined) parts.push("content replaced in full");
+      if (replacements !== undefined) parts.push(`${replacements.length} targeted edit${replacements.length === 1 ? "" : "s"} applied`);
       if (status !== undefined) parts.push(`status set to "${status}"`);
       return { content: [{ type: "text", text: `Updated memory (ID: ${data.id || memory_id}) — ${parts.join(", ")}.\nUpdated: ${data.updated_at?.slice(0, 10) || "unknown"}` }] };
     }
