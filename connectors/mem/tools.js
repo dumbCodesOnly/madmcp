@@ -429,6 +429,23 @@ function formatRelatedEntities(edges) {
   return `Related entities (up to ${RELATION_TRAVERSAL_DEPTH} hops):\n${lines.join("\n")}`;
 }
 
+// Shared by mem0_search/mem0_list's include_relations option. Only the top
+// RELATION_RESOLVE_LIMIT results (by list position, i.e. rank) get a full
+// traversal; the rest just show how many outgoing relations they have,
+// unresolved, to avoid a full 3-hop resolution cost across an entire page
+// of results.
+async function buildRelationsSuffix(m, index, { user_id, agent_id, run_id }) {
+  const entityId = m.metadata?.entity_id;
+  if (!entityId) return "";
+  const relCount = Array.isArray(m.metadata?.relations) ? m.metadata.relations.length : 0;
+  if (index >= RELATION_RESOLVE_LIMIT) {
+    return relCount ? `\n  (${relCount} outgoing relation${relCount === 1 ? "" : "s"}, unresolved — outside top ${RELATION_RESOLVE_LIMIT})` : "";
+  }
+  const edges = await traverseRelations(entityId, { user_id, agent_id, run_id });
+  const rendered = formatRelatedEntities(edges);
+  return rendered ? `\n${rendered}` : "";
+}
+
 // Tier 2: search for existing memories similar to new content (used when no
 // entity_id was given, since entity_id already gets exact-match handling
 // above). Uses Mem0's own hybrid search with reranking for precision rather
