@@ -42,13 +42,15 @@ function safeEqual(a, b) {
   return mismatch === 0;
 }
 
-// Header-only auth. (Previously also accepted the key as a URL path segment
-// via /mcp/:key — removed because URLs end up in proxy/CDN/browser logs,
-// which is a much bigger leak surface than a header.)
+// Accepts the key via header OR as a URL path segment via /mcp/:key.
+// Path-based auth is back because Claude.ai's custom connector UI does not
+// currently support request-header auth for MCP servers on this account.
+// Prefer the header for any client that does support it.
 function requireMcpKey(req, res, next) {
   if (!MCP_SHARED_KEY) return next();
   const headerKey = req.get("x-manufact-key");
-  if (headerKey && safeEqual(headerKey, MCP_SHARED_KEY)) {
+  const pathKey   = req.params.key;
+  if ((headerKey && safeEqual(headerKey, MCP_SHARED_KEY)) || (pathKey && safeEqual(pathKey, MCP_SHARED_KEY))) {
     return next();
   }
   res.status(401).json({
@@ -116,6 +118,7 @@ async function handleMcp(req, res) {
 }
 
 app.post("/mcp", mcpLimiter, requireMcpKey, handleMcp);
+app.post("/mcp/:key", mcpLimiter, requireMcpKey, handleMcp);
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
@@ -124,5 +127,5 @@ app.listen(PORT, () => {
   if (!NOTION_TOKEN)   console.warn("WARNING: NOTION_TOKEN is not set. Notion tools will fail.");
   if (!MEM0_API_KEY)   console.warn("WARNING: MEM0_API_KEY is not set. Mem0 tools will fail.");
   if (!CLOUDFLARE_API_TOKEN || !CLOUDFLARE_ACCOUNT_ID) console.warn("WARNING: CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID not set. Cloudflare tools will fail.");
-  if (!MCP_SHARED_KEY) console.warn("WARNING: MCP_SHARED_KEY is not set. The /mcp and / endpoints are OPEN to anyone who has the URL.");
+  if (!MCP_SHARED_KEY) console.warn("WARNING: MCP_SHARED_KEY is not set. The /mcp, /mcp/:key, and / endpoints are OPEN to anyone who has the URL.");
 });
