@@ -22,7 +22,14 @@ export function register(server) {
       try {
         data = await githubRequest(`/users/${owner}/repos?type=${type}&sort=${sort}&per_page=${per_page}`);
       } catch {
-        data = await githubRequest(`/orgs/${owner}/repos?type=${type}&sort=${sort}&per_page=${per_page}`);
+        // /orgs/:org/repos doesn't accept the same `type` values as
+        // /users/:username/repos — it has no "owner" value (valid values are
+        // all/public/private/forks/sources/member). "owner" is only meaningful
+        // for the user endpoint we just tried, so map it to "all" here rather
+        // than forwarding a value the org endpoint will 422 on. Other type
+        // values ("all", "member") are valid on both and pass through as-is.
+        const orgType = type === "owner" ? "all" : type;
+        data = await githubRequest(`/orgs/${owner}/repos?type=${orgType}&sort=${sort}&per_page=${per_page}`);
       }
       const lines = data.map((r) =>
         `${r.private ? "🔒" : "🌐"} ${r.full_name}${r.description ? ` — ${r.description}` : ""} [${r.language || "unknown"}] ⭐${r.stargazers_count}`
