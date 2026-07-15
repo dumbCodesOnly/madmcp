@@ -41,3 +41,15 @@ export const ALLOWED_IP_RANGES = (process.env.ALLOWED_IP_RANGES || "160.79.104.0
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
+
+// Number of reverse-proxy hops in front of this server whose X-Forwarded-For
+// entries should be trusted when determining the real client IP (used for
+// both Express's own trust-proxy setting and the IP allowlist check).
+// Default of 1 matches Render and most single-CDN-hop platforms. Deploying
+// behind a different proxy chain (e.g. a platform that adds more hops before
+// reaching this app) may need a different value — if legitimate requests
+// start getting 403'd, or IP allowlisting seems to trust the wrong address,
+// check this first rather than assuming the allowlist itself is wrong.
+export const TRUST_PROXY_HOPS = Number.isInteger(Number(process.env.TRUST_PROXY_HOPS))
+  ? Number(process.env.TRUST_PROXY_HOPS)
+  : 1;
