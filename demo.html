@@ -317,9 +317,10 @@
     ], ms:312},
     { id:'m0', label:'MEM0 · DEDUP + RELATIONS', lines:[
       ['prompt','> remember why, for next time'],
-      ['call','→ mem0_add({ content: "edge-router: no timeout…" })'],
-      ['result','⚠ possible duplicate (0.81) — added, flagged for review'],
-      ['call','→ mem0_update({ relations: [...] })'],
+      ['why','Why: the same “no timeout on a third-party call” pattern recurs across services — storing it with relations makes future triage faster.'],
+      ['call','→ mem0_add({ content: "edge-router: no timeout on legacyPricingService caused checkout p95 spike", metadata: { tags: ["timeout","checkout"] } })'],
+      ['result','⚠ possible duplicate (0.81 similarity to mem #4471) — added, flagged for review'],
+      ['call','→ mem0_update({ relations: ["INC-114", "edge-router", "legacyPricingService"] })'],
       ['stamped','✓ stamped · 874ms · relation graph updated']
     ], ms:874},
     { id:'wf', label:'FETCH · VERIFY', lines:[
