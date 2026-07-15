@@ -19,6 +19,11 @@ export const CLOUDFLARE_API_TOKEN  = process.env.CLOUDFLARE_API_TOKEN;
 export const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
 export const CLOUDFLARE_API        = "https://api.cloudflare.com/client/v4";
 
+// Context7 works without a key at low rate limits, so this is optional
+// (unlike the other connectors' tokens) — only warn, never hard-fail on it.
+export const CONTEXT7_API_KEY = process.env.CONTEXT7_API_KEY;
+export const CONTEXT7_API     = "https://context7.com/api/v2";
+
 // Shared-secret auth for the /mcp endpoint. If set, every request to /mcp
 // must include a matching `x-manufact-key` header, or it is rejected before
 // any connector tools (GitHub, Notion, Mem0, Fetch) are reachable.
