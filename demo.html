@@ -31,7 +31,7 @@
       radial-gradient(circle at 15% 8%, rgba(232,163,61,0.05), transparent 40%),
       radial-gradient(circle at 85% 90%, rgba(111,191,139,0.04), transparent 40%);
   }
-  .wrap{max-width:760px;margin:0 auto;}
+  .wrap{max-width:1040px;margin:0 auto;}
 
   .eyebrow{
     font-family:'IBM Plex Mono',monospace;
@@ -58,7 +58,7 @@
     color:var(--dim);
     font-size:15px;
     line-height:1.55;
-    max-width:54ch;
+    max-width:60ch;
     margin:0 0 8px;
   }
   .sub b{color:var(--text);font-weight:600;}
@@ -68,7 +68,7 @@
     color:var(--dim);
     opacity:0.75;
     letter-spacing:0.02em;
-    margin:0 0 44px;
+    margin:0 0 40px;
   }
 
   /* switchboard */
@@ -166,6 +166,17 @@
   .jack.active .code{color:var(--amber);}
   .jack.active .name{color:var(--amber);opacity:0.8;}
 
+  /* ── layout: terminal + synced status panel ── */
+  .stage{
+    display:grid;
+    grid-template-columns:1fr 300px;
+    gap:22px;
+    align-items:start;
+  }
+  @media (max-width:820px){
+    .stage{grid-template-columns:1fr;}
+  }
+
   /* terminal */
   .term{
     background:var(--panel-2);
@@ -175,7 +186,7 @@
     font-family:'IBM Plex Mono',monospace;
     font-size:12.5px;
     line-height:1.65;
-    height:440px;
+    height:480px;
     overflow-y:auto;
     white-space:pre-wrap;
     word-break:break-word;
@@ -207,6 +218,68 @@
     animation:blink 1s steps(1) infinite;
   }
   @keyframes blink{50%{opacity:0;}}
+
+  /* right column: connector status panel, synced to the active step */
+  .status-panel{
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+  }
+  .status-head{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--dim);
+    opacity:0.7;
+    margin-bottom:2px;
+  }
+  .note-card{
+    background:var(--panel);
+    border:1px solid var(--hair);
+    border-radius:var(--radius);
+    padding:11px 13px;
+    opacity:0.35;
+    transition:opacity 0.3s ease, border-color 0.3s ease;
+  }
+  .note-card.active{
+    opacity:1;
+    border-color:var(--amber-dim);
+  }
+  .note-card .tag{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10px;
+    letter-spacing:0.08em;
+    color:var(--green);
+    text-transform:uppercase;
+    margin-bottom:4px;
+  }
+  .note-card.active .tag{color:var(--amber);}
+  .note-card p{
+    margin:0;
+    font-size:12.5px;
+    line-height:1.5;
+    color:var(--text);
+  }
+
+  /* running session stats, ticks up as the trace plays */
+  .stats{
+    margin-top:6px;
+    background:var(--panel-2);
+    border:1px solid var(--hair);
+    border-radius:var(--radius);
+    padding:12px 14px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    color:var(--dim);
+  }
+  .stats .row{
+    display:flex;
+    justify-content:space-between;
+    padding:3px 0;
+  }
+  .stats .row span:last-child{color:var(--text);font-weight:600;}
+  .stats .row.warn span:last-child{color:var(--amber);}
 
   .controls{
     display:flex;
@@ -246,7 +319,7 @@
   footer .stack{font-family:'IBM Plex Mono',monospace;font-size:11.5px;}
 
   @media (max-width:520px){
-    .term{height:400px;font-size:11.5px;}
+    .term{height:420px;font-size:11.5px;}
   }
 
   @media (prefers-reduced-motion:reduce){
@@ -282,7 +355,25 @@
     </div>
   </div>
 
-  <div class="term" id="term" aria-live="polite"></div>
+  <div class="stage">
+    <div class="term" id="term" aria-live="polite"></div>
+
+    <div class="status-panel">
+      <div class="status-head">Session progress</div>
+      <div class="note-card" data-id="0"><div class="tag">Step 1 · GitHub</div><p>Searches the actual repo for the suspect code path — no guessing at file/line numbers.</p></div>
+      <div class="note-card" data-id="1"><div class="tag">Step 2 · Cloudflare</div><p>Pulls real Workers Observability metrics to confirm the hunch before touching any code.</p></div>
+      <div class="note-card" data-id="2"><div class="tag">Step 3 · GitHub</div><p>Commits the fix and opens a PR in the same turn — no copy-pasting diffs by hand.</p></div>
+      <div class="note-card" data-id="3"><div class="tag">Step 4 · Notion</div><p>Updates the live incident doc so the status reflects reality without a manual edit.</p></div>
+      <div class="note-card" data-id="4"><div class="tag">Step 5 · Mem0</div><p>Stores the root cause with dedup + a relation graph, so the next incident finds this one.</p></div>
+      <div class="note-card" data-id="5"><div class="tag">Step 6 · Fetch</div><p>Confirms the public status page actually reflects the fix — closes the loop.</p></div>
+
+      <div class="stats" id="stats">
+        <div class="row"><span>Connectors touched</span><span id="stat-connectors">0 / 5</span></div>
+        <div class="row"><span>Tool calls</span><span id="stat-calls">0</span></div>
+        <div class="row warn"><span>Total latency</span><span id="stat-latency">0ms</span></div>
+      </div>
+    </div>
+  </div>
 
   <div class="controls">
     <span id="status">playing sample trace…</span>
@@ -303,20 +394,24 @@
   const jacks = document.querySelectorAll('.jack');
   const wires = document.querySelectorAll('.wire');
   const restartBtn = document.getElementById('restart');
+  const noteCards = document.querySelectorAll('.note-card');
+  const statConnectors = document.getElementById('stat-connectors');
+  const statCalls = document.getElementById('stat-calls');
+  const statLatency = document.getElementById('stat-latency');
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // Illustrative trace — fictional org/incident/code, walked through all five connectors.
   // No real calls are made; this is a scripted playback for demonstration.
   const script = [
-    { t:'step', text:'STEP 1 / 6 · GITHUB' },
+    { t:'step', text:'STEP 1 / 6 · GITHUB', note:0, connector:'gh' },
     { t:'prompt', text:'> edge-router is slow under load — find the suspect code' },
     { t:'call',   text:'→ tool_call  search_code({ repo: "acme-labs/edge-router", query: "legacyPricingService" })', wire:'gh' },
     { t:'result', text:
 `src/routes/checkout.js:142   await legacyPricingService.call(req.body)
 src/routes/checkout.js:143   // TODO: no timeout — revisit before GA` },
-    { t:'note', text:'✓ 200 · 118ms · 1 match, no timeout set' },
+    { t:'note', text:'✓ 200 · 118ms · 1 match, no timeout set', ms:118 },
 
-    { t:'step', text:'STEP 2 / 6 · CLOUDFLARE' },
+    { t:'step', text:'STEP 2 / 6 · CLOUDFLARE', note:1, connector:'cf' },
     { t:'prompt', text:'> pull the last hour of p95 latency to confirm' },
     { t:'call',   text:'→ tool_call  cf_workers_observability_query({ script: "edge-router", metric: "p95_latency_ms", timeframe: "1h" })', wire:'cf' },
     { t:'result', text:
@@ -324,23 +419,23 @@ src/routes/checkout.js:143   // TODO: no timeout — revisit before GA` },
 09:30    298ms
 09:41  1,860ms  ← spike begins
 09:45  2,140ms` },
-    { t:'note', text:'✓ 200 · 204ms · spike tracks checkout traffic' },
+    { t:'note', text:'✓ 200 · 204ms · spike tracks checkout traffic', ms:204 },
 
-    { t:'step', text:'STEP 3 / 6 · GITHUB' },
+    { t:'step', text:'STEP 3 / 6 · GITHUB', note:2, connector:'gh' },
     { t:'prompt', text:'> add an 800ms timeout + circuit breaker, open a PR' },
     { t:'call',   text:'→ tool_call  push_files({ repo: "edge-router", branch: "fix/pricing-timeout", files: [1] })', wire:'gh' },
     { t:'result', text:'✓ committed a4f0c12 → fix/pricing-timeout' },
     { t:'call',   text:'→ tool_call  create_pull_request({ title: "Add timeout guard to legacyPricingService", base: "main", head: "fix/pricing-timeout" })', wire:'gh' },
     { t:'result', text:'✓ PR #482 opened against main' },
-    { t:'note', text:'✓ 200 · 96ms + 141ms' },
+    { t:'note', text:'✓ 200 · 96ms + 141ms', ms:237 },
 
-    { t:'step', text:'STEP 4 / 6 · NOTION' },
+    { t:'step', text:'STEP 4 / 6 · NOTION', note:3, connector:'no' },
     { t:'prompt', text:'> update the incident doc' },
     { t:'call',   text:'→ tool_call  notion_update_page({ page: "INC-114 — Checkout latency spike", append: "Root cause identified; fix in review (PR #482)." })', wire:'no' },
     { t:'result', text:'✓ page updated · status → In review' },
-    { t:'note', text:'✓ 200 · 312ms' },
+    { t:'note', text:'✓ 200 · 312ms', ms:312 },
 
-    { t:'step', text:'STEP 5 / 6 · MEM0 — dedup + relation graph' },
+    { t:'step', text:'STEP 5 / 6 · MEM0 — dedup + relation graph', note:4, connector:'m0' },
     { t:'prompt', text:'> remember why, for next time' },
     { t:'call',   text:'→ tool_call  mem0_add({ content: "edge-router: legacyPricingService had no timeout, spiked to 2s+ under load. Fixed with 800ms timeout + circuit breaker (PR #482).", entity_id: "edge-router-checkout-incident", categories: ["edge-router","incidents"] })', wire:'m0' },
     { t:'result', text:
@@ -348,12 +443,12 @@ src/routes/checkout.js:143   // TODO: no timeout — revisit before GA` },
   a1c9e02f (0.81): "checkout latency spike — pricingService,
   no timeout, resolved 3 months ago"
 Memory created: 9b13e0f` },
-    { t:'note', text:'✓ 200 · 641ms · Tier 2 semantic check (threshold 0.75, block 0.92)' },
+    { t:'note', text:'✓ 200 · 641ms · Tier 2 semantic check (threshold 0.75, block 0.92)', ms:641 },
 
     { t:'prompt', text:'> link it to the related incident and the code it touches' },
     { t:'call',   text:'→ tool_call  mem0_update({ memory_id: "9b13e0f", relations: [{ to_entity_id: "incident-091", relation: "resembles" }, { to_entity_id: "legacyPricingService", relation: "affects" }] })', wire:'m0' },
     { t:'result', text:'✓ relations replaced (2 stored)' },
-    { t:'note', text:'✓ 200 · 233ms' },
+    { t:'note', text:'✓ 200 · 233ms', ms:233 },
 
     { t:'prompt', text:'> what\'s this incident connected to?' },
     { t:'call',   text:'→ tool_call  mem0_get({ memory_id: "9b13e0f" })', wire:'m0' },
@@ -362,19 +457,22 @@ Memory created: 9b13e0f` },
   [hop 1] resembles → incident-091 (deleted)
   [hop 1] affects → legacyPricingService
   [hop 2] blocks ← release-1.42-freeze` },
-    { t:'note', text:'✓ 200 · 812ms · 3-hop traversal, 1 unresolved edge' },
+    { t:'note', text:'✓ 200 · 812ms · 3-hop traversal, 1 unresolved edge', ms:812 },
 
-    { t:'step', text:'STEP 6 / 6 · FETCH' },
+    { t:'step', text:'STEP 6 / 6 · FETCH', note:5, connector:'wf' },
     { t:'prompt', text:'> confirm the status page reflects the fix' },
     { t:'call',   text:'→ tool_call  web_fetch({ url: "https://status.acme-labs.dev/incidents/114" })', wire:'wf' },
     { t:'result', text:'"INC-114 — Resolved. Checkout latency back to baseline (~310ms p95)."' },
-    { t:'note', text:'✓ 200 · 233ms' },
+    { t:'note', text:'✓ 200 · 233ms', ms:233 },
 
     { t:'gap' },
     { t:'prompt', text:'_' , final:true},
   ];
 
   let cancelled = false;
+  let totalCalls = 0;
+  let totalMs = 0;
+  const touched = new Set();
 
   function clearActive(){
     jacks.forEach(j=>j.classList.remove('active'));
@@ -385,6 +483,16 @@ Memory created: 9b13e0f` },
     clearActive();
     document.querySelector('.jack[data-id="'+id+'"]')?.classList.add('active');
     document.querySelector('.wire[data-id="'+id+'"]')?.classList.add('active');
+  }
+
+  function setActiveNote(id){
+    noteCards.forEach(c=>c.classList.toggle('active', c.dataset.id === String(id)));
+  }
+
+  function updateStats(){
+    statConnectors.textContent = touched.size + ' / 5';
+    statCalls.textContent = totalCalls;
+    statLatency.textContent = totalMs.toLocaleString() + 'ms';
   }
 
   function appendLine(cls, text){
@@ -413,16 +521,23 @@ Memory created: 9b13e0f` },
     cancelled = false;
     term.innerHTML = '';
     clearActive();
+    setActiveNote(-1);
+    totalCalls = 0; totalMs = 0; touched.clear();
+    updateStats();
     statusEl.textContent = 'playing sample trace…';
 
     for(const line of script){
       if(cancelled) return;
+
+      if(line.note !== undefined) setActiveNote(line.note);
+      if(line.connector) touched.add(line.connector);
 
       if(line.t === 'gap'){ await sleep(500); continue; }
 
       if(line.t === 'step'){
         clearActive();
         appendLine('step', line.text);
+        updateStats();
         await sleep(350);
         continue;
       }
@@ -432,11 +547,11 @@ Memory created: 9b13e0f` },
         el.className='prompt';
         el.innerHTML='&gt; <span class="cursor"></span>';
         term.appendChild(el);
-        statusEl.textContent = 'done — sample trace, 5 connectors, 9 calls';
+        statusEl.textContent = 'done — sample trace, 5 connectors, ' + totalCalls + ' calls';
         return;
       }
 
-      if(line.wire) activate(line.wire);
+      if(line.wire){ activate(line.wire); totalCalls++; updateStats(); }
 
       // Note: the typewriter reveal always runs, even under prefers-reduced-motion —
       // it's a text reveal, not the parallax/zoom kind of motion that setting guards
@@ -452,6 +567,7 @@ Memory created: 9b13e0f` },
         await sleep(750);
       } else if(line.t === 'note'){
         appendLine('note', line.text);
+        if(line.ms){ totalMs += line.ms; updateStats(); }
         await sleep(300);
       }
     }
