@@ -17,16 +17,15 @@ yet, open `demo.html` directly.)
 
 ## Deploy & connect (quickstart)
 
-For a first-time setup, end to end: get tokens, deploy, add it to Claude.
+Get tokens, deploy, connect to Claude — in that order.
 
-**1. Get a host to run it.** This is a plain Node/Express app with no
-one-click deploy yet — push it to any Node-friendly host (Render, Railway,
-Fly.io, etc.) or run it on your own server. It only needs `npm install &&
-npm start` and listens on `$PORT` (default `8080`).
+**1. Host it.** Plain Node/Express app, no one-click deploy yet — push to any
+Node-friendly host (Render, Railway, Fly.io, etc.) or run it yourself. Needs
+only `npm install && npm start`; listens on `$PORT` (default `8080`).
 
-**2. Collect tokens for the connectors you actually want.** Every token below
-is independent — skip any connector you don't need, its tools will just fail
-at call time rather than blocking the others.
+**2. Collect tokens for the connectors you want.** Each is independent —
+skip any you don't need, its tools just fail at call time instead of
+blocking the rest.
 
 | Connector | Where to get it |
 |---|---|
@@ -35,32 +34,29 @@ at call time rather than blocking the others.
 | Mem0 | app.mem0.ai → API keys |
 | Cloudflare | dash.cloudflare.com → My Profile → API Tokens, plus your Account ID from the dashboard sidebar |
 
-**3. Set the security env vars — don't skip these.**
-- `MCP_SHARED_KEY` — pick any long random string. Without it, `/mcp` is open
-  to anyone who has your server's URL, tokens and all.
-- `IP_ALLOWLIST_ENABLED` / `ALLOWED_IP_RANGES` — on by default, and already
-  set to Claude's published connector IP range, so you can leave these alone
-  if you're only ever connecting from Claude.ai. Set
-  `IP_ALLOWLIST_ENABLED=false` temporarily if you want to test with
-  curl/Postman from your own machine first.
+**3. Set two security env vars — don't skip these.**
+- `MCP_SHARED_KEY` — any long random string. Unset = `/mcp` is open to
+  anyone who has your server's URL, tokens and all.
+- `IP_ALLOWLIST_ENABLED` — on by default, pre-set to Claude's published
+  connector IP range, so leave it alone if you're only ever connecting from
+  Claude.ai. Set it to `false` temporarily to test with curl/Postman from
+  your own machine first.
 
-**4. Deploy, then verify.** Set your env vars on the host and deploy.
-`GET /health` should return `{"status":"ok"}` with no auth needed. `GET /`
-(requires your `x-manufact-key` header or the `/​<key>` path) reports which
-connectors are actually configured — use it to confirm your tokens landed.
+**4. Deploy, then verify.** `GET /health` returns `{"status":"ok"}`, no auth
+needed. `GET /` (needs your `x-manufact-key` header — this endpoint doesn't
+support the path-key variant) reports which connectors are configured, so
+you can confirm your tokens landed.
 
-**5. Add it to Claude.** In Claude.ai → Settings → Connectors → Add custom
-connector, use:
+**5. Add it to Claude.** Settings → Connectors → Add custom connector, using:
 
 ```
 https://<your-host>/mcp/<your MCP_SHARED_KEY>
 ```
 
-(Path-based key auth exists specifically because Claude.ai's custom
-connector UI doesn't currently support header-based auth for MCP servers.)
+(Path-based, since Claude.ai's connector UI doesn't currently support
+header-based auth for MCP servers.)
 
-That's it — Claude can now call whichever connectors you configured tokens
-for. See **Configuration** below for the full variable reference.
+See **Configuration** below for the full variable reference.
 
 ## Connectors & tools
 
