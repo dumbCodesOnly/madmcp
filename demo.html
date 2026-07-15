@@ -132,6 +132,8 @@
   .manifest-body .call{color:var(--ink);}
   .manifest-body .result{color:var(--ink-soft);white-space:pre-wrap;}
   .manifest-body .stamped{color:var(--stamp-green);font-weight:700;}
+  .manifest-body .why{color:var(--ink-soft);font-style:italic;}
+  .manifest-body .why b{color:var(--ink);font-style:normal;font-weight:600;}
   .manifest-body > div{opacity:0;animation:line-in .25s ease forwards;margin:0 0 10px;}
   @keyframes line-in{from{opacity:0;transform:translateY(3px);}to{opacity:1;transform:translateY(0);}}
   .cursor{display:inline-block;width:7px;height:12px;background:var(--stamp-red);vertical-align:text-bottom;margin-left:2px;animation:blink 1s steps(1) infinite;}
@@ -187,6 +189,7 @@
   .card.active .tag{color:var(--stamp-red);}
   .card .metric{font-family:'Courier Prime',monospace;font-size:10px;color:var(--ink-soft);}
   .card p{margin:0;font-size:12.5px;line-height:1.5;font-family:'Fraunces',serif;font-weight:500;}
+  .card .tech{margin:5px 0 0;font-family:'Courier Prime',monospace;font-size:10px;color:var(--ink-soft);opacity:0.85;line-height:1.4;}
 
   .stats{margin-top:4px;background:var(--paper-2);border:1px solid var(--line);border-radius:3px;padding:12px 14px;font-family:'Courier Prime',monospace;font-size:11px;color:var(--ink-soft);}
   .stats .row{display:flex;justify-content:space-between;padding:3px 0;}
