@@ -179,13 +179,19 @@
   }
   .view-toggle .slider.pos-1{transform:translateX(calc(100% + 2px));}
   .view-toggle button{
+    -webkit-appearance:none;
+    -moz-appearance:none;
+    appearance:none;
     position:relative;
     z-index:1;
+    margin:0;
     border:none;
+    outline:none;
+    box-shadow:none;
     background:transparent;
     color:var(--dim);
     padding:8px 12px;
-    border-radius:999px;
+    border-radius:0;
     cursor:pointer;
     letter-spacing:0.04em;
     display:inline-flex;
@@ -197,6 +203,7 @@
     overflow:hidden;
     text-overflow:ellipsis;
     transition:color 0.2s ease;
+    -webkit-tap-highlight-color:transparent;
   }
   .view-toggle button .ic{font-size:12px;opacity:0.75;letter-spacing:0;flex:none;}
   .view-toggle button.on{color:var(--amber);}
@@ -224,7 +231,7 @@
   .cursor{display:inline-block;width:7px;height:13px;background:var(--amber);vertical-align:middle;margin-left:2px;animation:blink 1s steps(1) infinite;}
   @keyframes blink{50%{opacity:0;}}
 
-  /* protocol view — chat bubble + raw MCP JSON blocks */
+  /* protocol view — chat bubble + raw MCP JSON blocks — TODO #1 */
   .protocol-view{display:none;}
   .protocol-view.on{display:block;}
   .bubble{
@@ -273,7 +280,7 @@
   .json-str{color:var(--green);}
   .json-punc{color:var(--dim);}
 
-  /* scrubber */
+  /* scrubber — TODO #2 */
   .scrubber{
     display:flex;
     background:var(--panel);
@@ -284,6 +291,10 @@
     gap:4px;
   }
   .tick{
+    -webkit-appearance:none;
+    -moz-appearance:none;
+    appearance:none;
+    -webkit-tap-highlight-color:transparent;
     flex:1;
     display:flex;
     flex-direction:column;
@@ -304,7 +315,7 @@
   .tick:hover .bar{background:var(--dim);}
   .tick:focus-visible{outline:2px solid var(--amber);outline-offset:2px;}
 
-  /* status panel + per-connector metrics */
+  /* status panel + per-connector metrics — TODO #3 */
   .status-panel{display:flex;flex-direction:column;gap:10px;}
   .status-head{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--dim);opacity:0.7;margin-bottom:2px;}
   .note-card{background:var(--panel);border:1px solid var(--hair);border-radius:var(--radius);padding:11px 13px;opacity:0.35;transition:opacity 0.3s ease, border-color 0.3s ease;}
@@ -321,7 +332,7 @@
   .stats .row span:last-child{color:var(--text);font-weight:600;}
   .stats .row.warn span:last-child{color:var(--amber);}
 
-  /* mobile: horizontal swipeable strip instead of a stacked wall */
+  /* TODO #4 — mobile: horizontal swipeable strip instead of a stacked wall */
   @media (max-width:820px){
     .status-panel{
       display:flex;
@@ -344,7 +355,7 @@
   }
 
   .controls{display:flex;justify-content:space-between;align-items:center;margin-top:14px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim);}
-  button.restart{font-family:'IBM Plex Mono',monospace;background:transparent;border:1px solid var(--hair);color:var(--text);padding:7px 14px;border-radius:5px;font-size:11.5px;letter-spacing:0.04em;cursor:pointer;transition:border-color 0.2s ease,color 0.2s ease;}
+  button.restart{-webkit-appearance:none;-moz-appearance:none;appearance:none;-webkit-tap-highlight-color:transparent;font-family:'IBM Plex Mono',monospace;background:transparent;border:1px solid var(--hair);color:var(--text);padding:7px 14px;border-radius:5px;font-size:11.5px;letter-spacing:0.04em;cursor:pointer;transition:border-color 0.2s ease,color 0.2s ease;}
   button.restart:hover{border-color:var(--amber);color:var(--amber);}
   button.restart:focus-visible{outline:2px solid var(--amber);outline-offset:2px;}
   a{color:var(--amber);text-decoration:none;border-bottom:1px solid var(--amber-dim);}
