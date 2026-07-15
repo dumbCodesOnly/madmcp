@@ -296,8 +296,9 @@
     ], ms:118},
     { id:'cf', label:'CLOUDFLARE · METRICS', lines:[
       ['prompt','> pull the last hour of p95 latency to confirm'],
-      ['call','→ cf_workers_observability_query({ script: "edge-router", metric: "p95_latency_ms" })'],
-      ['result','09:41  1,860ms  ← spike begins\n09:45  2,140ms'],
+      ['why','Why: a code smell alone isn’t proof — cross-check against real traffic before proposing a fix, so the PR is backed by data.'],
+      ['call','→ cf_workers_observability_query({ script: "edge-router", metric: "p95_latency_ms", range: "1h" })'],
+      ['result','baseline  310ms\n09:41     1,860ms  ← spike begins\n09:45     2,140ms  (peak)\ncorrelation to checkout traffic: 0.93'],
       ['stamped','✓ stamped · 204ms · spike tracks checkout traffic']
     ], ms:204},
     { id:'gh', label:'GITHUB · COMMIT + PR', lines:[
