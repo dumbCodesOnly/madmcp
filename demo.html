@@ -325,8 +325,9 @@
     ], ms:874},
     { id:'wf', label:'FETCH · VERIFY', lines:[
       ['prompt','> confirm the status page reflects the fix'],
+      ['why','Why: internal metrics can look fine while the public status page lags — close the loop from the customer’s point of view before calling it done.'],
       ['call','→ web_fetch({ url: "https://status.acme-labs.dev/incidents/114" })'],
-      ['result','"INC-114 — Resolved. Latency back to baseline (~310ms p95)."'],
+      ['result','"INC-114 — Resolved. Latency back to baseline (~310ms p95)."\nlast updated 09:58 · matches Cloudflare baseline'],
       ['stamped','✓ stamped · 233ms']
     ], ms:233}
   ];
