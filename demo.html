@@ -162,6 +162,7 @@
   .term .result{color:var(--text);}
   .term .note{color:var(--green);}
   .term .dim{color:var(--dim);}
+  .term .tag{color:var(--dim);font-style:italic;opacity:0.85;}
   .cursor{
     display:inline-block;width:7px;height:13px;background:var(--amber);
     vertical-align:middle;margin-left:2px;
@@ -222,7 +223,7 @@
 
   <div class="eyebrow"><span class="dot"></span>MCP SERVER — LIVE PROTOCOL TRACE</div>
   <h1>madmcp</h1>
-  <p class="sub">One server, five real connectors — GitHub, Cloudflare, Notion, Mem0, and web fetch — giving an AI agent direct tool access to live infrastructure. <b>What's below is an unedited replay of two actual calls it served</b>, not mocked data.</p>
+  <p class="sub">One server, five real connectors — GitHub, Cloudflare, Notion, Mem0, and web fetch — giving an AI agent direct tool access to live infrastructure. <b>The GitHub trace below is an unedited replay of two real calls it served</b>; the Mem0 exchange that follows is a simulated example with placeholder data, marked as such.</p>
 
   <div class="board">
     <div class="core">
@@ -293,6 +294,23 @@
 409d397  Update README to reflect current connectors (v2.1.0)` },
     { t:'note', text:'✓ 200 · 5 commits returned' },
     { t:'gap' },
+    { t:'tag', text:'— simulated example below (mem0 connector) — placeholder data, not a live call —' },
+    { t:'prompt', text:'> what do I know about the onboarding flow?' },
+    { t:'call',   text:'→ tool_call  mem0_search({ query: "onboarding flow", limit: 3 })', wire:'m0' },
+    { t:'result', text:
+`0a1b2c3d  [onboarding, ux]      "Users drop off at step 3
+          (email verification) — add a progress bar."
+4e5f6a7b  [onboarding, copy]    "Welcome email A/B test:
+          personalized subject line, +18% open rate."
+8c9d0e1f  [onboarding, backend] "Trial accounts expire after
+          14 days; grace period logic in billing.js."` },
+    { t:'note', text:'✓ 200 · 3 memories (example data)' },
+    { t:'gap' },
+    { t:'prompt', text:'> remember: cap free-tier onboarding emails at 3' },
+    { t:'call',   text:'→ tool_call  mem0_add({ content: "Decision: cap free-tier onboarding emails at 3", categories: ["onboarding","decisions"] })', wire:'m0' },
+    { t:'result', text:'2f4a8b91  memory created' },
+    { t:'note', text:'✓ 200 · 1 memory added (example data)' },
+    { t:'gap' },
     { t:'prompt', text:'_' , final:true},
   ];
 
@@ -335,19 +353,25 @@
     cancelled = false;
     term.innerHTML = '';
     clearActive();
-    statusEl.textContent = 'replaying real transcripts…';
+    statusEl.textContent = 'replaying transcripts (2 real + 1 simulated)…';
 
     for(const line of script){
       if(cancelled) return;
 
       if(line.t === 'gap'){ await sleep(500); continue; }
 
+      if(line.t === 'tag'){
+        appendLine('tag', line.text);
+        await sleep(500);
+        continue;
+      }
+
       if(line.t === 'prompt' && line.final){
         const el=document.createElement('div');
         el.className='prompt';
         el.innerHTML='&gt; <span class="cursor"></span>';
         term.appendChild(el);
-        statusEl.textContent = 'done — real server, real responses';
+        statusEl.textContent = 'done — 2 real calls + 1 simulated example';
         return;
       }
 
