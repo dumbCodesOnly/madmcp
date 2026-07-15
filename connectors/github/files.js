@@ -104,7 +104,7 @@ export function register(server) {
 
   server.tool(
     "create_repo_file",
-    "Create a new file in a GitHub repository (not the local sandbox filesystem -- for that, use the computer-use create_file tool). Fails if the path already exists -- use str_replace_file for targeted edits to an existing file, or overwrite_file to explicitly replace its full contents.
+    "Create a new file in a GitHub repository (not the local sandbox filesystem -- for that, use the computer-use create_file tool). Fails if the path already exists -- use str_replace_file for targeted edits to an existing file, or overwrite_file to explicitly replace its full contents.",
     {
       owner:   z.string().optional().describe(`Repository owner. Defaults to "${DEFAULT_OWNER}" if omitted.`),
       repo:    z.string().describe("Repository name"),
