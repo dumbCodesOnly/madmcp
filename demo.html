@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>madmcp — live protocol trace</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root{
+    --ink:#0B1220;
+    --panel:#121A2B;
+    --panel-2:#0E1626;
+    --hair:#26314A;
+    --text:#E7E3D5;
+    --dim:#8291AC;
+    --amber:#E8A33D;
+    --amber-dim:#5C4520;
+    --green:#6FBF8B;
+    --radius:3px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--ink);
+    color:var(--text);
+    font-family:'IBM Plex Sans',system-ui,sans-serif;
+    min-height:100vh;
+    padding:5vw 5vw 8vw;
+    background-image:
+      radial-gradient(circle at 15% 8%, rgba(232,163,61,0.05), transparent 40%),
+      radial-gradient(circle at 85% 90%, rgba(111,191,139,0.04), transparent 40%);
+  }
+  .wrap{max-width:760px;margin:0 auto;}
+
+  .eyebrow{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11.5px;
+    letter-spacing:0.14em;
+    color:var(--amber);
+    text-transform:uppercase;
+    margin-bottom:14px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px var(--amber);}
+
+  h1{
+    font-family:'IBM Plex Sans Condensed',sans-serif;
+    font-weight:700;
+    font-size:clamp(2.4rem,7vw,3.6rem);
+    letter-spacing:-0.01em;
+    margin:0 0 6px;
+    line-height:1;
+  }
+  .sub{
+    color:var(--dim);
+    font-size:15px;
+    line-height:1.55;
+    max-width:52ch;
+    margin:0 0 44px;
+  }
+  .sub b{color:var(--text);font-weight:600;}
+
+  /* switchboard */
+  .board{
+    position:relative;
+    background:var(--panel);
+    border:1px solid var(--hair);
+    border-radius:6px;
+    padding:34px 20px 26px;
+    margin-bottom:22px;
+    overflow:hidden;
+  }
+  .board::before{
+    content:"PATCH BAY";
+    position:absolute;
+    top:12px;left:16px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10px;
+    letter-spacing:0.16em;
+    color:var(--dim);
+    opacity:0.6;
+  }
+  .core{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    margin-bottom:26px;
+  }
+  .core-node{
+    font-family:'IBM Plex Mono',monospace;
+    font-weight:600;
+    font-size:14px;
+    color:var(--text);
+    background:var(--panel-2);
+    border:1px solid var(--hair);
+    padding:10px 18px;
+    border-radius:5px;
+    letter-spacing:0.02em;
+  }
+  .wires{
+    display:flex;
+    justify-content:center;
+    gap:0;
+    position:relative;
+    height:46px;
+  }
+  .wire{
+    width:2px;
+    background:var(--hair);
+    position:relative;
+    transition:background 0.25s ease;
+  }
+  .wire.active{background:var(--amber);box-shadow:0 0 10px rgba(232,163,61,0.6);}
+
+  .jacks{
+    display:grid;
+    grid-template-columns:repeat(5,1fr);
+    gap:8px;
+  }
+  .jack{
+    font-family:'IBM Plex Mono',monospace;
+    text-align:center;
+    padding:8px 4px 10px;
+    border:1px solid var(--hair);
+    border-radius:5px;
+    background:var(--panel-2);
+    transition:border-color 0.25s ease, box-shadow 0.25s ease;
+  }
+  .jack .code{
+    font-size:12px;
+    font-weight:600;
+    color:var(--dim);
+    letter-spacing:0.06em;
+  }
+  .jack .name{
+    font-size:9px;
+    color:var(--dim);
+    opacity:0.7;
+    margin-top:2px;
+  }
+  .jack.active{border-color:var(--amber);box-shadow:0 0 0 1px rgba(232,163,61,0.3), 0 0 14px rgba(232,163,61,0.25);}
+  .jack.active .code{color:var(--amber);}
+
+  /* terminal */
+  .term{
+    background:var(--panel-2);
+    border:1px solid var(--hair);
+    border-radius:6px;
+    padding:18px 18px 20px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12.5px;
+    line-height:1.65;
+    min-height:340px;
+    white-space:pre-wrap;
+    word-break:break-word;
+  }
+  .term .prompt{color:var(--amber);}
+  .term .call{color:#7CA6D6;}
+  .term .result{color:var(--text);}
+  .term .note{color:var(--green);}
+  .term .dim{color:var(--dim);}
+  .cursor{
+    display:inline-block;width:7px;height:13px;background:var(--amber);
+    vertical-align:middle;margin-left:2px;
+    animation:blink 1s steps(1) infinite;
+  }
+  @keyframes blink{50%{opacity:0;}}
+
+  .controls{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    margin-top:14px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    color:var(--dim);
+  }
+  button{
+    font-family:'IBM Plex Mono',monospace;
+    background:transparent;
+    border:1px solid var(--hair);
+    color:var(--text);
+    padding:7px 14px;
+    border-radius:5px;
+    font-size:11.5px;
+    letter-spacing:0.04em;
+    cursor:pointer;
+    transition:border-color 0.2s ease,color 0.2s ease;
+  }
+  button:hover{border-color:var(--amber);color:var(--amber);}
+  button:focus-visible{outline:2px solid var(--amber);outline-offset:2px;}
+  a{color:var(--amber);text-decoration:none;border-bottom:1px solid var(--amber-dim);}
+  a:hover{border-bottom-color:var(--amber);}
+  a:focus-visible{outline:2px solid var(--amber);outline-offset:2px;}
+
+  footer{
+    margin-top:34px;
+    padding-top:22px;
+    border-top:1px solid var(--hair);
+    font-size:13px;
+    color:var(--dim);
+    line-height:1.7;
+  }
+  footer .stack{font-family:'IBM Plex Mono',monospace;font-size:11.5px;}
+
+  @media (max-width:520px){
+    .jacks{grid-template-columns:repeat(3,1fr);}
+    .jack:nth-child(4),.jack:nth-child(5){grid-column:span 1;}
+    .term{min-height:420px;font-size:11.5px;}
+  }
+
+  @media (prefers-reduced-motion:reduce){
+    .cursor{animation:none;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="eyebrow"><span class="dot"></span>MCP SERVER — LIVE PROTOCOL TRACE</div>
+  <h1>madmcp</h1>
+  <p class="sub">One server, five real connectors — GitHub, Cloudflare, Notion, Mem0, and web fetch — giving an AI agent direct tool access to live infrastructure. <b>What's below is an unedited replay of two actual calls it served</b>, not mocked data.</p>
+
+  <div class="board">
+    <div class="core">
+      <div class="core-node">madmcp · /mcp</div>
+      <div class="wires" id="wires">
+        <div class="wire" data-id="gh"></div>
+        <div class="wire" data-id="cf"></div>
+        <div class="wire" data-id="no"></div>
+        <div class="wire" data-id="m0"></div>
+        <div class="wire" data-id="wf"></div>
+      </div>
+    </div>
+    <div class="jacks" id="jacks">
+      <div class="jack" data-id="gh"><div class="code">GH</div><div class="name">GitHub</div></div>
+      <div class="jack" data-id="cf"><div class="code">CF</div><div class="name">Cloudflare</div></div>
+      <div class="jack" data-id="no"><div class="code">NO</div><div class="name">Notion</div></div>
+      <div class="jack" data-id="m0"><div class="code">M0</div><div class="name">Mem0</div></div>
+      <div class="jack" data-id="wf"><div class="code">WF</div><div class="name">Fetch</div></div>
+    </div>
+  </div>
+
+  <div class="term" id="term" aria-live="polite"></div>
+
+  <div class="controls">
+    <span id="status">replaying real transcripts…</span>
+    <button id="restart" type="button">restart ↺</button>
+  </div>
+
+  <footer>
+    <p><b style="color:var(--text)">Stack:</b> <span class="stack">Node.js · Express · MCP protocol · GitHub REST · Cloudflare API · Notion API · Mem0</span></p>
+    <p>Full source: <a href="https://github.com/dumbCodesOnly/madmcp" target="_blank" rel="noopener">github.com/dumbCodesOnly/madmcp</a></p>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  const term = document.getElementById('term');
+  const statusEl = document.getElementById('status');
+  const jacks = document.querySelectorAll('.jack');
+  const wires = document.querySelectorAll('.wire');
+  const restartBtn = document.getElementById('restart');
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Real transcripts captured from the live deployed server.
+  const script = [
+    { t:'prompt', text:'> list dumbCodesOnly\'s repos' },
+    { t:'call',   text:'→ tool_call  list_repos({ owner: "dumbCodesOnly" })', wire:'gh' },
+    { t:'result', text:
+`🌐 dumbCodesOnly/logger        [JavaScript]  ★0
+🌐 dumbCodesOnly/cfmanager     [Shell]       ★0
+🌐 dumbCodesOnly/profile       [HTML]        ★0
+🌐 dumbCodesOnly/madmcp        [JavaScript]  ★0
+🌐 dumbCodesOnly/wan-render    [HTML]        ★0` },
+    { t:'note', text:'✓ 200 · 5 repos returned' },
+    { t:'gap' },
+    { t:'prompt', text:'> what\'s the recent commit history on madmcp?' },
+    { t:'call',   text:'→ tool_call  list_commits({ owner: "dumbCodesOnly", repo: "madmcp", per_page: 5 })', wire:'gh' },
+    { t:'result', text:
+`47fe6b9  Fix list_repos: /orgs/:org/repos doesn't accept
+         type=owner (only valid on /users/:username/repos)
+406e290  Fix cf_workers_observability_keys: normalize
+         timeframe through toEpochMillis like query/values do
+962ce23  Fix download_repo N+1: reuse blob SHA already in
+         hand instead of re-walking the tree per file
+6823331  Fix SSRF: validate web_fetch URLs (protocol +
+         resolved-IP allowlist), re-validate every redirect hop
+409d397  Update README to reflect current connectors (v2.1.0)` },
+    { t:'note', text:'✓ 200 · 5 commits returned' },
+    { t:'gap' },
+    { t:'prompt', text:'_' , final:true},
+  ];
+
+  let cancelled = false;
+
+  function clearActive(){
+    jacks.forEach(j=>j.classList.remove('active'));
+    wires.forEach(w=>w.classList.remove('active'));
+  }
+
+  function activate(id){
+    clearActive();
+    document.querySelector('.jack[data-id="'+id+'"]')?.classList.add('active');
+    document.querySelector('.wire[data-id="'+id+'"]')?.classList.add('active');
+  }
+
+  function appendLine(cls, text){
+    const span = document.createElement('div');
+    span.className = cls;
+    span.textContent = text;
+    term.appendChild(span);
+    term.scrollTop = term.scrollHeight;
+  }
+
+  async function typeLine(cls, text, speed){
+    const el = document.createElement('div');
+    el.className = cls;
+    term.appendChild(el);
+    for(let i=0;i<text.length;i++){
+      if(cancelled) return;
+      el.textContent += text[i];
+      term.scrollTop = term.scrollHeight;
+      await sleep(speed);
+    }
+  }
+
+  function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+
+  async function run(){
+    cancelled = false;
+    term.innerHTML = '';
+    clearActive();
+    statusEl.textContent = 'replaying real transcripts…';
+
+    for(const line of script){
+      if(cancelled) return;
+
+      if(line.t === 'gap'){ await sleep(reduced?0:500); continue; }
+
+      if(line.t === 'prompt' && line.final){
+        const el=document.createElement('div');
+        el.className='prompt';
+        el.innerHTML='&gt; <span class="cursor"></span>';
+        term.appendChild(el);
+        statusEl.textContent = 'done — real server, real responses';
+        return;
+      }
+
+      if(line.wire) activate(line.wire);
+      else clearActive();
+
+      if(line.t === 'prompt'){
+        if(reduced) appendLine('prompt', line.text);
+        else await typeLine('prompt', line.text, 26);
+        await sleep(reduced?0:250);
+      } else if(line.t === 'call'){
+        if(reduced) appendLine('call', line.text);
+        else await typeLine('call', line.text, 14);
+        await sleep(reduced?0:400);
+      } else if(line.t === 'result'){
+        appendLine('result', line.text);
+        await sleep(reduced?0:900);
+      } else if(line.t === 'note'){
+        appendLine('note', line.text);
+        await sleep(reduced?0:200);
+      }
+    }
+  }
+
+  restartBtn.addEventListener('click', ()=>{
+    cancelled = true;
+    setTimeout(run, 50);
+  });
+
+  run();
+})();
+</script>
+</body>
+</html>

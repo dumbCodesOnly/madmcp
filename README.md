@@ -4,6 +4,15 @@ An MCP server giving Claude (or any MCP client) tool access to GitHub,
 Cloudflare, Notion, Mem0, and arbitrary web pages — so agent workflows can
 read/write real infrastructure and content directly, without manual copy/paste.
 
+## Live demo
+
+[**View the live protocol trace →**](https://dumbCodesOnly.github.io/madmcp/demo.html)
+
+An animated replay of two real tool calls this server actually served —
+`list_repos` and `list_commits` — shown flowing through the connector each
+one hits. Unedited output, not mocked data. (If GitHub Pages isn't enabled
+for this repo yet, open `demo.html` directly.)
+
 ## Connectors & tools
 
 ### GitHub
