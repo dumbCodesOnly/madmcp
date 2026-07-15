@@ -333,11 +333,29 @@ src/routes/checkout.js:143   // TODO: no timeout — revisit before GA` },
     { t:'result', text:'✓ page updated · status → In review' },
     { t:'note', text:'✓ 200 · 312ms' },
 
-    { t:'step', text:'STEP 5 / 6 · MEM0' },
+    { t:'step', text:'STEP 5 / 6 · MEM0 — dedup + relation graph' },
     { t:'prompt', text:'> remember why, for next time' },
-    { t:'call',   text:'→ tool_call  mem0_add({ content: "edge-router: legacyPricingService had no timeout, spiked to 2s+ under load. Fixed with 800ms timeout + circuit breaker (PR #482).", categories: ["edge-router","incidents"] })', wire:'m0' },
-    { t:'result', text:'✓ memory created · 9b13e0f' },
-    { t:'note', text:'✓ 200 · 88ms' },
+    { t:'call',   text:'→ tool_call  mem0_add({ content: "edge-router: legacyPricingService had no timeout, spiked to 2s+ under load. Fixed with 800ms timeout + circuit breaker (PR #482).", entity_id: "edge-router-checkout-incident", categories: ["edge-router","incidents"] })', wire:'m0' },
+    { t:'result', text:
+`⚠ Possible duplicate found (score 0.81) — added anyway, flagged for review:
+  a1c9e02f (0.81): "checkout latency spike — pricingService,
+  no timeout, resolved 3 months ago"
+Memory created: 9b13e0f` },
+    { t:'note', text:'✓ 200 · 641ms · Tier 2 semantic check (threshold 0.75, block 0.92)' },
+
+    { t:'prompt', text:'> link it to the related incident and the code it touches' },
+    { t:'call',   text:'→ tool_call  mem0_update({ memory_id: "9b13e0f", relations: [{ to_entity_id: "incident-091", relation: "resembles" }, { to_entity_id: "legacyPricingService", relation: "affects" }] })', wire:'m0' },
+    { t:'result', text:'✓ relations replaced (2 stored)' },
+    { t:'note', text:'✓ 200 · 233ms' },
+
+    { t:'prompt', text:'> what\'s this incident connected to?' },
+    { t:'call',   text:'→ tool_call  mem0_get({ memory_id: "9b13e0f" })', wire:'m0' },
+    { t:'result', text:
+`Related entities (up to 3 hops):
+  [hop 1] resembles → incident-091 (deleted)
+  [hop 1] affects → legacyPricingService
+  [hop 2] blocks ← release-1.42-freeze` },
+    { t:'note', text:'✓ 200 · 812ms · 3-hop traversal, 1 unresolved edge' },
 
     { t:'step', text:'STEP 6 / 6 · FETCH' },
     { t:'prompt', text:'> confirm the status page reflects the fix' },
@@ -407,7 +425,7 @@ src/routes/checkout.js:143   // TODO: no timeout — revisit before GA` },
         el.className='prompt';
         el.innerHTML='&gt; <span class="cursor"></span>';
         term.appendChild(el);
-        statusEl.textContent = 'done — sample trace, 5 connectors, 7 calls';
+        statusEl.textContent = 'done — sample trace, 5 connectors, 9 calls';
         return;
       }
 
