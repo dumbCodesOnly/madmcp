@@ -303,8 +303,9 @@
     ], ms:204},
     { id:'gh', label:'GITHUB · COMMIT + PR', lines:[
       ['prompt','> add an 800ms timeout + circuit breaker, open a PR'],
-      ['call','→ push_files({ branch: "fix/pricing-timeout" })  →  create_pull_request({ title: "Add timeout guard" })'],
-      ['result','✓ committed a4f0c12 · PR #482 opened against main'],
+      ['why','Why: 800ms covers this service’s normal p99 with headroom, without adding a full second of user-facing lag on top.'],
+      ['call','→ push_files({ branch: "fix/pricing-timeout", files: ["checkout.js"] })\n→ create_pull_request({ title: "Add timeout guard", base: "main", body: "Fixes INC-114" })'],
+      ['result','✓ committed a4f0c12 (1 file, +9/-1) · PR #482 opened against main\nchecks queued: lint, unit-tests'],
       ['stamped','✓ stamped · 237ms']
     ], ms:237},
     { id:'no', label:'NOTION · INCIDENT DOC', lines:[
