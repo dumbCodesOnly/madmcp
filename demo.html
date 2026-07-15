@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>madmcp — live protocol trace</title>
+<title>madmcp — sample workflow trace</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
@@ -58,10 +58,18 @@
     color:var(--dim);
     font-size:15px;
     line-height:1.55;
-    max-width:52ch;
-    margin:0 0 44px;
+    max-width:54ch;
+    margin:0 0 8px;
   }
   .sub b{color:var(--text);font-weight:600;}
+  .sub-note{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    color:var(--dim);
+    opacity:0.75;
+    letter-spacing:0.02em;
+    margin:0 0 44px;
+  }
 
   /* switchboard */
   .board{
@@ -82,6 +90,16 @@
     letter-spacing:0.16em;
     color:var(--dim);
     opacity:0.6;
+  }
+  .board::after{
+    content:"SAMPLE DATA";
+    position:absolute;
+    top:12px;right:16px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10px;
+    letter-spacing:0.16em;
+    color:var(--amber);
+    opacity:0.55;
   }
   .core{
     display:flex;
@@ -130,19 +148,6 @@
     background:var(--panel-2);
     transition:border-color 0.25s ease, box-shadow 0.25s ease;
   }
-  .jack .sim-badge{
-    position:absolute;
-    top:-7px;
-    right:-7px;
-    font-size:8px;
-    font-weight:600;
-    letter-spacing:0.05em;
-    color:var(--ink);
-    background:var(--dim);
-    padding:1px 4px;
-    border-radius:3px;
-    line-height:1.4;
-  }
   .jack .code{
     font-size:12px;
     font-weight:600;
@@ -157,9 +162,6 @@
   }
   .jack.active{border-color:var(--amber);box-shadow:0 0 0 1px rgba(232,163,61,0.3), 0 0 14px rgba(232,163,61,0.25);}
   .jack.active .code{color:var(--amber);}
-  .jack.active.simulated{border-style:dashed;border-color:var(--dim);box-shadow:0 0 0 1px rgba(130,145,172,0.3), 0 0 10px rgba(130,145,172,0.2);}
-  .jack.active.simulated .code{color:var(--dim);}
-  .wire.active.simulated{background:var(--dim);box-shadow:0 0 8px rgba(130,145,172,0.5);}
 
   /* terminal */
   .term{
@@ -170,16 +172,26 @@
     font-family:'IBM Plex Mono',monospace;
     font-size:12.5px;
     line-height:1.65;
-    min-height:340px;
+    min-height:420px;
     white-space:pre-wrap;
     word-break:break-word;
   }
+  .term .step{
+    color:var(--dim);
+    font-size:10.5px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    opacity:0.7;
+    margin:14px 0 6px;
+    padding-top:12px;
+    border-top:1px dashed var(--hair);
+  }
+  .term .step:first-child{margin-top:0;padding-top:0;border-top:none;}
   .term .prompt{color:var(--amber);}
   .term .call{color:#7CA6D6;}
   .term .result{color:var(--text);}
   .term .note{color:var(--green);}
   .term .dim{color:var(--dim);}
-  .term .tag{color:var(--dim);font-style:italic;opacity:0.85;}
   .cursor{
     display:inline-block;width:7px;height:13px;background:var(--amber);
     vertical-align:middle;margin-left:2px;
@@ -227,7 +239,7 @@
   @media (max-width:520px){
     .jacks{grid-template-columns:repeat(3,1fr);}
     .jack:nth-child(4),.jack:nth-child(5){grid-column:span 1;}
-    .term{min-height:420px;font-size:11.5px;}
+    .term{min-height:480px;font-size:11.5px;}
   }
 
   @media (prefers-reduced-motion:reduce){
@@ -238,9 +250,10 @@
 <body>
 <div class="wrap">
 
-  <div class="eyebrow"><span class="dot"></span>MCP SERVER — LIVE PROTOCOL TRACE</div>
+  <div class="eyebrow"><span class="dot"></span>MCP SERVER — SAMPLE WORKFLOW TRACE</div>
   <h1>madmcp</h1>
-  <p class="sub">One server, five real connectors — GitHub, Cloudflare, Notion, Mem0, and web fetch — giving an AI agent direct tool access to live infrastructure. <b>The GitHub trace below is an unedited replay of two real calls it served</b>; the Mem0 exchange that follows is a simulated example with placeholder data, marked as such.</p>
+  <p class="sub">One server, five connectors — GitHub, Cloudflare, Notion, Mem0, and web fetch — giving an AI agent direct, tool-level access to real infrastructure. <b>Below is a walkthrough of a typical incident, worked start to finish</b>, one connector at a time.</p>
+  <p class="sub-note">Illustrative only — the org, incident, and code shown are fictional. No live calls are made on page load.</p>
 
   <div class="board">
     <div class="core">
@@ -257,7 +270,7 @@
       <div class="jack" data-id="gh"><div class="code">GH</div><div class="name">GitHub</div></div>
       <div class="jack" data-id="cf"><div class="code">CF</div><div class="name">Cloudflare</div></div>
       <div class="jack" data-id="no"><div class="code">NO</div><div class="name">Notion</div></div>
-      <div class="jack" data-id="m0" title="Mem0 trace in this demo is simulated example data"><span class="sim-badge">SIM</span><div class="code">M0</div><div class="name">Mem0</div></div>
+      <div class="jack" data-id="m0"><div class="code">M0</div><div class="name">Mem0</div></div>
       <div class="jack" data-id="wf"><div class="code">WF</div><div class="name">Fetch</div></div>
     </div>
   </div>
@@ -265,7 +278,7 @@
   <div class="term" id="term" aria-live="polite"></div>
 
   <div class="controls">
-    <span id="status">replaying real transcripts…</span>
+    <span id="status">playing sample trace…</span>
     <button id="restart" type="button">restart ↺</button>
   </div>
 
@@ -285,48 +298,53 @@
   const restartBtn = document.getElementById('restart');
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // Real transcripts captured from the live deployed server.
+  // Illustrative trace — fictional org/incident/code, walked through all five connectors.
+  // No real calls are made; this is a scripted playback for demonstration.
   const script = [
-    { t:'prompt', text:'> list dumbCodesOnly\'s repos' },
-    { t:'call',   text:'→ tool_call  list_repos({ owner: "dumbCodesOnly" })', wire:'gh' },
+    { t:'step', text:'STEP 1 / 6 · GITHUB' },
+    { t:'prompt', text:'> edge-router is slow under load — find the suspect code' },
+    { t:'call',   text:'→ tool_call  search_code({ repo: "acme-labs/edge-router", query: "legacyPricingService" })', wire:'gh' },
     { t:'result', text:
-`🌐 dumbCodesOnly/logger        [JavaScript]  ★0
-🌐 dumbCodesOnly/cfmanager     [Shell]       ★0
-🌐 dumbCodesOnly/profile       [HTML]        ★0
-🌐 dumbCodesOnly/madmcp        [JavaScript]  ★0
-🌐 dumbCodesOnly/wan-render    [HTML]        ★0` },
-    { t:'note', text:'✓ 200 · 5 repos returned' },
-    { t:'gap' },
-    { t:'prompt', text:'> what\'s the recent commit history on madmcp?' },
-    { t:'call',   text:'→ tool_call  list_commits({ owner: "dumbCodesOnly", repo: "madmcp", per_page: 5 })', wire:'gh' },
+`src/routes/checkout.js:142   await legacyPricingService.call(req.body)
+src/routes/checkout.js:143   // TODO: no timeout — revisit before GA` },
+    { t:'note', text:'✓ 200 · 118ms · 1 match, no timeout set' },
+
+    { t:'step', text:'STEP 2 / 6 · CLOUDFLARE' },
+    { t:'prompt', text:'> pull the last hour of p95 latency to confirm' },
+    { t:'call',   text:'→ tool_call  cf_workers_observability_query({ script: "edge-router", metric: "p95_latency_ms", timeframe: "1h" })', wire:'cf' },
     { t:'result', text:
-`47fe6b9  Fix list_repos: /orgs/:org/repos doesn't accept
-         type=owner (only valid on /users/:username/repos)
-406e290  Fix cf_workers_observability_keys: normalize
-         timeframe through toEpochMillis like query/values do
-962ce23  Fix download_repo N+1: reuse blob SHA already in
-         hand instead of re-walking the tree per file
-6823331  Fix SSRF: validate web_fetch URLs (protocol +
-         resolved-IP allowlist), re-validate every redirect hop
-409d397  Update README to reflect current connectors (v2.1.0)` },
-    { t:'note', text:'✓ 200 · 5 commits returned' },
-    { t:'gap' },
-    { t:'tag', text:'— simulated example below (mem0 connector) — placeholder data, not a live call —' },
-    { t:'prompt', text:'> what do I know about the onboarding flow?' },
-    { t:'call',   text:'→ tool_call  mem0_search({ query: "onboarding flow", limit: 3 })', wire:'m0' },
-    { t:'result', text:
-`0a1b2c3d  [onboarding, ux]      "Users drop off at step 3
-          (email verification) — add a progress bar."
-4e5f6a7b  [onboarding, copy]    "Welcome email A/B test:
-          personalized subject line, +18% open rate."
-8c9d0e1f  [onboarding, backend] "Trial accounts expire after
-          14 days; grace period logic in billing.js."` },
-    { t:'note', text:'✓ 200 · 3 memories (example data)' },
-    { t:'gap' },
-    { t:'prompt', text:'> remember: cap free-tier onboarding emails at 3' },
-    { t:'call',   text:'→ tool_call  mem0_add({ content: "Decision: cap free-tier onboarding emails at 3", categories: ["onboarding","decisions"] })', wire:'m0' },
-    { t:'result', text:'2f4a8b91  memory created' },
-    { t:'note', text:'✓ 200 · 1 memory added (example data)' },
+`09:00    312ms
+09:30    298ms
+09:41  1,860ms  ← spike begins
+09:45  2,140ms` },
+    { t:'note', text:'✓ 200 · 204ms · spike tracks checkout traffic' },
+
+    { t:'step', text:'STEP 3 / 6 · GITHUB' },
+    { t:'prompt', text:'> add an 800ms timeout + circuit breaker, open a PR' },
+    { t:'call',   text:'→ tool_call  push_files({ repo: "edge-router", branch: "fix/pricing-timeout", files: [1] })', wire:'gh' },
+    { t:'result', text:'✓ committed a4f0c12 → fix/pricing-timeout' },
+    { t:'call',   text:'→ tool_call  create_pull_request({ title: "Add timeout guard to legacyPricingService", base: "main", head: "fix/pricing-timeout" })', wire:'gh' },
+    { t:'result', text:'✓ PR #482 opened against main' },
+    { t:'note', text:'✓ 200 · 96ms + 141ms' },
+
+    { t:'step', text:'STEP 4 / 6 · NOTION' },
+    { t:'prompt', text:'> update the incident doc' },
+    { t:'call',   text:'→ tool_call  notion_update_page({ page: "INC-114 — Checkout latency spike", append: "Root cause identified; fix in review (PR #482)." })', wire:'no' },
+    { t:'result', text:'✓ page updated · status → In review' },
+    { t:'note', text:'✓ 200 · 312ms' },
+
+    { t:'step', text:'STEP 5 / 6 · MEM0' },
+    { t:'prompt', text:'> remember why, for next time' },
+    { t:'call',   text:'→ tool_call  mem0_add({ content: "edge-router: legacyPricingService had no timeout, spiked to 2s+ under load. Fixed with 800ms timeout + circuit breaker (PR #482).", categories: ["edge-router","incidents"] })', wire:'m0' },
+    { t:'result', text:'✓ memory created · 9b13e0f' },
+    { t:'note', text:'✓ 200 · 88ms' },
+
+    { t:'step', text:'STEP 6 / 6 · FETCH' },
+    { t:'prompt', text:'> confirm the status page reflects the fix' },
+    { t:'call',   text:'→ tool_call  web_fetch({ url: "https://status.acme-labs.dev/incidents/114" })', wire:'wf' },
+    { t:'result', text:'"INC-114 — Resolved. Checkout latency back to baseline (~310ms p95)."' },
+    { t:'note', text:'✓ 200 · 233ms' },
+
     { t:'gap' },
     { t:'prompt', text:'_' , final:true},
   ];
@@ -334,20 +352,14 @@
   let cancelled = false;
 
   function clearActive(){
-    jacks.forEach(j=>j.classList.remove('active','simulated'));
-    wires.forEach(w=>w.classList.remove('active','simulated'));
+    jacks.forEach(j=>j.classList.remove('active'));
+    wires.forEach(w=>w.classList.remove('active'));
   }
 
   function activate(id){
     clearActive();
-    const jack = document.querySelector('.jack[data-id="'+id+'"]');
-    const wire = document.querySelector('.wire[data-id="'+id+'"]');
-    jack?.classList.add('active');
-    wire?.classList.add('active');
-    if(id === 'm0'){
-      jack?.classList.add('simulated');
-      wire?.classList.add('simulated');
-    }
+    document.querySelector('.jack[data-id="'+id+'"]')?.classList.add('active');
+    document.querySelector('.wire[data-id="'+id+'"]')?.classList.add('active');
   }
 
   function appendLine(cls, text){
@@ -376,16 +388,17 @@
     cancelled = false;
     term.innerHTML = '';
     clearActive();
-    statusEl.textContent = 'replaying transcripts (2 real + 1 simulated)…';
+    statusEl.textContent = 'playing sample trace…';
 
     for(const line of script){
       if(cancelled) return;
 
       if(line.t === 'gap'){ await sleep(500); continue; }
 
-      if(line.t === 'tag'){
-        appendLine('tag', line.text);
-        await sleep(500);
+      if(line.t === 'step'){
+        clearActive();
+        appendLine('step', line.text);
+        await sleep(350);
         continue;
       }
 
@@ -394,28 +407,27 @@
         el.className='prompt';
         el.innerHTML='&gt; <span class="cursor"></span>';
         term.appendChild(el);
-        statusEl.textContent = 'done — 2 real calls + 1 simulated example';
+        statusEl.textContent = 'done — sample trace, 5 connectors, 7 calls';
         return;
       }
 
       if(line.wire) activate(line.wire);
-      else clearActive();
 
       // Note: the typewriter reveal always runs, even under prefers-reduced-motion —
       // it's a text reveal, not the parallax/zoom kind of motion that setting guards
       // against. Only the blinking cursor (a true ambient loop) is muted via CSS.
       if(line.t === 'prompt'){
-        await typeLine('prompt', line.text, 26);
-        await sleep(250);
+        await typeLine('prompt', line.text, 24);
+        await sleep(220);
       } else if(line.t === 'call'){
-        await typeLine('call', line.text, 14);
-        await sleep(400);
+        await typeLine('call', line.text, 10);
+        await sleep(380);
       } else if(line.t === 'result'){
         appendLine('result', line.text);
-        await sleep(900);
+        await sleep(750);
       } else if(line.t === 'note'){
         appendLine('note', line.text);
-        await sleep(200);
+        await sleep(300);
       }
     }
   }
