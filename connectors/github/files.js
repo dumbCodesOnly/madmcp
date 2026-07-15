@@ -158,7 +158,7 @@ export function register(server) {
 
   server.tool(
     "delete_file",
-    "Delete a file from a GitHub repository. To replace a file's contents instead of removing it, use overwrite_file or str_replace_file.",
+    "Delete a file from a GitHub repository. To replace a file's contents instead of removing it, use overwrite_file or str_replace_file; to create a new file instead, use create_repo_file.",
     {
       owner:   z.string().optional().describe(`Repository owner. Defaults to "${DEFAULT_OWNER}" if omitted.`),
       repo:    z.string().describe("Repository name"),
@@ -179,7 +179,7 @@ export function register(server) {
 
   server.tool(
     "rename_file",
-    "Rename or move a file in a GitHub repository. To change a file's contents without moving it, use str_replace_file (targeted edit) or overwrite_file (full rewrite).",
+    "Rename or move a file in a GitHub repository. To change a file's contents without moving it, use str_replace_file (targeted edit) or overwrite_file (full rewrite); to create a brand-new file, use create_repo_file.",
     {
       owner:    z.string().describe("Repository owner (user or org)"),
       repo:     z.string().describe("Repository name"),
