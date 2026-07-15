@@ -121,6 +121,7 @@
     gap:8px;
   }
   .jack{
+    position:relative;
     font-family:'IBM Plex Mono',monospace;
     text-align:center;
     padding:8px 4px 10px;
@@ -128,6 +129,19 @@
     border-radius:5px;
     background:var(--panel-2);
     transition:border-color 0.25s ease, box-shadow 0.25s ease;
+  }
+  .jack .sim-badge{
+    position:absolute;
+    top:-7px;
+    right:-7px;
+    font-size:8px;
+    font-weight:600;
+    letter-spacing:0.05em;
+    color:var(--ink);
+    background:var(--dim);
+    padding:1px 4px;
+    border-radius:3px;
+    line-height:1.4;
   }
   .jack .code{
     font-size:12px;
@@ -143,6 +157,9 @@
   }
   .jack.active{border-color:var(--amber);box-shadow:0 0 0 1px rgba(232,163,61,0.3), 0 0 14px rgba(232,163,61,0.25);}
   .jack.active .code{color:var(--amber);}
+  .jack.active.simulated{border-style:dashed;border-color:var(--dim);box-shadow:0 0 0 1px rgba(130,145,172,0.3), 0 0 10px rgba(130,145,172,0.2);}
+  .jack.active.simulated .code{color:var(--dim);}
+  .wire.active.simulated{background:var(--dim);box-shadow:0 0 8px rgba(130,145,172,0.5);}
 
   /* terminal */
   .term{
@@ -240,7 +257,7 @@
       <div class="jack" data-id="gh"><div class="code">GH</div><div class="name">GitHub</div></div>
       <div class="jack" data-id="cf"><div class="code">CF</div><div class="name">Cloudflare</div></div>
       <div class="jack" data-id="no"><div class="code">NO</div><div class="name">Notion</div></div>
-      <div class="jack" data-id="m0"><div class="code">M0</div><div class="name">Mem0</div></div>
+      <div class="jack" data-id="m0" title="Mem0 trace in this demo is simulated example data"><span class="sim-badge">SIM</span><div class="code">M0</div><div class="name">Mem0</div></div>
       <div class="jack" data-id="wf"><div class="code">WF</div><div class="name">Fetch</div></div>
     </div>
   </div>
@@ -317,14 +334,20 @@
   let cancelled = false;
 
   function clearActive(){
-    jacks.forEach(j=>j.classList.remove('active'));
-    wires.forEach(w=>w.classList.remove('active'));
+    jacks.forEach(j=>j.classList.remove('active','simulated'));
+    wires.forEach(w=>w.classList.remove('active','simulated'));
   }
 
   function activate(id){
     clearActive();
-    document.querySelector('.jack[data-id="'+id+'"]')?.classList.add('active');
-    document.querySelector('.wire[data-id="'+id+'"]')?.classList.add('active');
+    const jack = document.querySelector('.jack[data-id="'+id+'"]');
+    const wire = document.querySelector('.wire[data-id="'+id+'"]');
+    jack?.classList.add('active');
+    wire?.classList.add('active');
+    if(id === 'm0'){
+      jack?.classList.add('simulated');
+      wire?.classList.add('simulated');
+    }
   }
 
   function appendLine(cls, text){
