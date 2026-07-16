@@ -28,6 +28,45 @@ export function register(server) {
   );
 
   server.tool(
+    "get_pr_comments",
+    "Get the general conversation comments on a pull request (the main comment thread, same as issue comments — not inline code-review comments). Use this to see what people have said in response to a PR.",
+    {
+      owner:       z.string().describe("Repository owner (user or org)"),
+      repo:        z.string().describe("Repository name"),
+      pull_number: z.number().describe("Pull request number"),
+      per_page:    z.number().optional().describe("Number of comments to return, max 100 (default: 30)"),
+    },
+    async ({ owner, repo, pull_number, per_page = 30 }) => {
+      const data = await githubRequest(`/repos/${owner}/${repo}/issues/${pull_number}/comments?per_page=${per_page}`);
+      if (!data.length) return { content: [{ type: "text", text: `No comments on PR #${pull_number}.` }] };
+      const lines = data.map((c) =>
+        `${c.user.login} (${c.created_at.slice(0, 16).replace("T", " ")}):\n${c.body}\n  ${c.html_url}`
+      );
+      return { content: [{ type: "text", text: `${data.length} comment(s) on PR #${pull_number}:\n\n${lines.join("\n\n---\n\n")}` }] };
+    }
+  );
+
+  server.tool(
+    "get_pr_reviews",
+    "Get the formal reviews on a pull request — approvals, change requests, and general review comments left via GitHub's review flow (distinct from get_pr_comments, which covers the plain conversation thread). Shows who reviewed, their verdict, and their summary comment.",
+    {
+      owner:       z.string().describe("Repository owner (user or org)"),
+      repo:        z.string().describe("Repository name"),
+      pull_number: z.number().describe("Pull request number"),
+      per_page:    z.number().optional().describe("Number of reviews to return, max 100 (default: 30)"),
+    },
+    async ({ owner, repo, pull_number, per_page = 30 }) => {
+      const data = await githubRequest(`/repos/${owner}/${repo}/pulls/${pull_number}/reviews?per_page=${per_page}`);
+      if (!data.length) return { content: [{ type: "text", text: `No reviews on PR #${pull_number} yet.` }] };
+      const lines = data.map((r) =>
+        `${r.user.login} — ${r.state} (${(r.submitted_at || "").slice(0, 16).replace("T", " ")})` +
+        `${r.body ? `:\n${r.body}` : ""}\n  ${r.html_url}`
+      );
+      return { content: [{ type: "text", text: `${data.length} review(s) on PR #${pull_number}:\n\n${lines.join("\n\n---\n\n")}` }] };
+    }
+  );
+
+  server.tool(
     "create_pull_request",
     "Open a new pull request in a GitHub repository.",
     {
