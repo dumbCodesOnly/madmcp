@@ -28,15 +28,18 @@ export function register(server) {
 
   server.tool(
     "web_fetch",
-    "Fetch the content of any public URL and return its text, JSON, or stripped HTML. Useful for reading docs, APIs, pages, or raw files from the web.",
+    "Fetch the content of any public URL and return its text, JSON, or stripped HTML. Useful for reading docs, APIs, pages, or raw files from the web. Also supports POST/PUT/PATCH/DELETE with a JSON body for calling public write APIs (e.g. registering an API key, submitting a form) — set method and body.",
     {
       url:          z.string().url().describe("The URL to fetch"),
+      method:       z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional().describe("HTTP method (default: GET)"),
+      body:         z.any().optional().describe("JSON body to send (object). Only meaningful for POST/PUT/PATCH. Sent with Content-Type: application/json."),
       max_chars:    z.number().optional().describe("Truncate response to this many characters (default: 500000)"),
       raw_html:     z.boolean().optional().describe("Return raw HTML instead of stripped plain text (default: false)"),
       headers:      z.record(z.string()).optional().describe("Optional extra HTTP request headers (e.g. Authorization)"),
     },
-    async ({ url, max_chars = 500000, raw_html = false, headers = {} }) => {
-      const { status, ok, contentType, text } = await fetchUrl(url, { headers });
+    async ({ url, method = "GET", body, max_chars = 500000, raw_html = false, headers = {} }) => {
+      const mergedHeaders = body ? { "Content-Type": "application/json", ...headers } : headers;
+      const { status, ok, contentType, text } = await fetchUrl(url, { method, body, headers: mergedHeaders });
 
       let output = text;
 
