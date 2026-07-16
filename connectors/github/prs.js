@@ -88,6 +88,36 @@ export function register(server) {
   );
 
   server.tool(
+    "update_pull_request",
+    "Edit an existing pull request's title, description body, base branch, or open/closed state. Use this to update a PR's description after review feedback, rename it, or close it without merging.",
+    {
+      owner:       z.string().describe("Repository owner (user or org)"),
+      repo:        z.string().describe("Repository name"),
+      pull_number: z.number().describe("Pull request number"),
+      title:       z.string().optional().describe("New PR title"),
+      body:        z.string().optional().describe("New PR description body (replaces the existing description entirely)"),
+      state:       z.enum(["open", "closed"]).optional().describe("Set to 'closed' to close the PR without merging, or 'open' to reopen it"),
+      base:        z.string().optional().describe("Change the base branch this PR merges into"),
+    },
+    async ({ owner, repo, pull_number, title, body, state, base }) => {
+      const patch = {};
+      if (title !== undefined) patch.title = title;
+      if (body !== undefined) patch.body = body;
+      if (state !== undefined) patch.state = state;
+      if (base !== undefined) patch.base = base;
+      if (Object.keys(patch).length === 0) {
+        return { content: [{ type: "text", text: "No fields provided to update — pass at least one of title, body, state, or base." }] };
+      }
+      const data = await githubRequest(`/repos/${owner}/${repo}/pulls/${pull_number}`, {
+        method: "PATCH",
+        body: patch,
+      });
+      const updated = Object.keys(patch).join(", ");
+      return { content: [{ type: "text", text: `Updated PR #${pull_number} (${updated}).\n${data.html_url}` }] };
+    }
+  );
+
+  server.tool(
     "merge_pull_request",
     "Merge a pull request in a GitHub repository.",
     {
