@@ -41,15 +41,21 @@ export function register(server) {
         notionRequest(`/pages/${page_id}`),
         notionRequest(`/blocks/${page_id}/children?page_size=100`),
       ]);
-      const title   = notionPageTitle(page);
-      const content = notionBlocksToText(blocksData.results || []);
-      const hasMore = blocksData.has_more ? "\n\n⚠️ Page has more blocks — only first 100 shown." : "";
+      const title    = notionPageTitle(page);
+      const blocks   = blocksData.results || [];
+      const content  = notionBlocksToText(blocks);
+      const hasMore  = blocksData.has_more ? "\n\n⚠️ Page has more blocks — only first 100 shown." : "";
+      const subPages     = blocks.filter((b) => b.type === "child_page").length;
+      const subDatabases = blocks.filter((b) => b.type === "child_database").length;
+      const childSummary = (subPages || subDatabases)
+        ? `\n\n🔗 ${subPages} subpage(s), ${subDatabases} subdatabase(s) found — use notion_get_page on their IDs above to view them.`
+        : "";
       const text =
         `# ${title}\n` +
         `ID: ${page.id}\n` +
         `URL: ${page.url}\n` +
         `Created: ${page.created_time?.slice(0, 10)} | Last edited: ${page.last_edited_time?.slice(0, 10)}\n\n` +
-        (content || "(no content)") + hasMore;
+        (content || "(no content)") + hasMore + childSummary;
       return { content: [{ type: "text", text }] };
     }
   );
