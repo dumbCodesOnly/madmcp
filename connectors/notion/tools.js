@@ -360,9 +360,13 @@ export function register(server) {
       content:     z.string().optional().describe("Plain text content to add as paragraph blocks"),
       entity_id:   z.string().optional().describe("Optional stable identifier for the thing this page represents (e.g. 'pr-workers-sdk-14714'). BEFORE inventing a new one, use notion_search for an existing page on the same topic -- entity_id dedup only catches an EXACT marker match. If a page already exists with this entity_id, notion_create_page will NOT create a duplicate -- it returns the existing page's id/url/content instead, so you can call notion_update_page (append_content or replacements) on it instead of creating a new one. Stored as a visible '🔑 entity_id: ...' marker paragraph at the top of the page, since Notion pages outside a database have no real custom-property field to use instead."),
       status:      z.enum(STATUS_VALUES).optional().describe("Optional lifecycle status (open/resolved/superseded) for this page. Stored as a visible '🏷️ status: ...' marker paragraph, same convention as entity_id."),
+      relations:   z.array(z.object({
+        to_entity_id: z.string().describe("The entity_id of the other tracked page this one relates to"),
+        relation:     z.string().describe("The relation type, e.g. 'blocks', 'depends_on', 'relates_to' -- free text"),
+      })).optional().describe("Optional list of outgoing relations from this page's entity to others, e.g. [{to_entity_id:'bug-4', relation:'blocks'}]. Stored as visible '🔗 relation -> to_entity_id' marker paragraphs. Only outgoing relations are supported -- see notion_get_page's Relations section for resolved targets."),
     },
-    async ({ parent_id, parent_type, title, content, entity_id, status }) => {
-      const result = await doCreatePage({ parent_id, parent_type, title, content, entity_id, status });
+    async ({ parent_id, parent_type, title, content, entity_id, status, relations }) => {
+      const result = await doCreatePage({ parent_id, parent_type, title, content, entity_id, status, relations });
       if (result.skipped) {
         return {
           content: [{
