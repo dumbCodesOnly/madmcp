@@ -94,29 +94,48 @@ export function register(server) {
 
   server.tool(
     "notion_create_page",
-    "Create a new Notion page inside a parent page or database.",
+    "Create a new Notion page inside a parent page or database. Pass entity_id to get upsert-style dedup protection (mirrors mem0_add): if a page already carries that entity_id marker, this refuses to create a duplicate and returns the existing page instead. Recommended whenever this page represents a stable, ongoing thing (a tracked PR, an issue, a recurring report) rather than a genuine one-off.",
     {
       parent_id:   z.string().describe("ID of the parent page or database"),
       parent_type: z.enum(["page", "database"]).describe("Whether the parent is a page or a database"),
       title:       z.string().describe("Title of the new page"),
       content:     z.string().optional().describe("Plain text content to add as paragraph blocks"),
+      entity_id:   z.string().optional().describe("Optional stable identifier for the thing this page represents (e.g. 'pr-workers-sdk-14714'). BEFORE inventing a new one, use notion_search for an existing page on the same topic -- entity_id dedup only catches an EXACT marker match. If a page already exists with this entity_id, notion_create_page will NOT create a duplicate -- it returns the existing page's id/url/content instead, so you can call notion_update_page (append_content or replacements) on it instead of creating a new one. Stored as a visible '🔑 entity_id: ...' marker paragraph at the top of the page, since Notion pages outside a database have no real custom-property field to use instead."),
+      status:      z.enum(STATUS_VALUES).optional().describe("Optional lifecycle status (open/resolved/superseded) for this page. Stored as a visible '🏷️ status: ...' marker paragraph, same convention as entity_id."),
     },
-    async ({ parent_id, parent_type, title, content }) => {
+    async ({ parent_id, parent_type, title, content, entity_id, status }) => {
+      if (entity_id) {
+        const existing = await findPageByEntityId(entity_id);
+        if (existing) {
+          return {
+            content: [{
+              type: "text",
+              text:
+                `Not creating — a page already exists for entity_id "${entity_id}" (id: ${existing.pageId}, title: "${existing.title}"). No duplicate was created.\n` +
+                `URL: ${existing.url}\n\n` +
+                `Next step: call notion_get_page on this id to review current content, then notion_update_page (append_content or replacements) to update it instead of creating a new page.`,
+            }],
+          };
+        }
+      }
       const parent     = parent_type === "database" ? { database_id: parent_id } : { page_id: parent_id };
       const properties = parent_type === "database"
         ? { Name:  { title: [{ text: { content: title } }] } }
         : { title: { title: [{ text: { content: title } }] } };
-      const children = content
+      const markerBlocks  = buildMarkerBlocks({ entity_id, status });
+      const contentBlocks = content
         ? content.split("\n").filter(Boolean).map((line) => ({
             object: "block", type: "paragraph",
             paragraph: { rich_text: [{ type: "text", text: { content: line } }] },
           }))
         : [];
+      const children = [...markerBlocks, ...contentBlocks];
       const data = await notionRequest("/pages", {
         method: "POST",
         body: { parent, properties, children },
       });
-      return { content: [{ type: "text", text: `Created Notion page "${title}"\nID: ${data.id}\nURL: ${data.url}` }] };
+      const markerNote = markerBlocks.length ? ` (with ${entity_id ? "entity_id" : ""}${entity_id && status ? " + " : ""}${status ? "status" : ""} marker${markerBlocks.length > 1 ? "s" : ""})` : "";
+      return { content: [{ type: "text", text: `Created Notion page "${title}"${markerNote}\nID: ${data.id}\nURL: ${data.url}` }] };
     }
   );
 
