@@ -3,38 +3,84 @@
 // ---------------------------------------------------------------------------
 
 import { z } from "zod";
+import { NOTION_INDEX_PAGE_ID } from "../../config.js";
 import {
   notionRequest, notionPageTitle, notionDatabaseTitle, notionRichTextToString,
   notionBlocksToText, buildMarkerBlocks, statusMarkerBlock, notionBlockPlainText, parseMarkers,
+  buildIndexEntryText, parseIndexEntryText,
 } from "./client.js";
 
 const STATUS_VALUES = ["open", "resolved", "superseded"];
 
 // ---------------------------------------------------------------------------
 // Dedup/upsert lookup (2026-07-17, gap #1 -- see mem0 entity_id:
-// madmcp-notion-connector-gaps-roadmap). Mirrors mem/tools.js's
-// findByEntityId, adapted to Notion's constraints: there's no indexed
-// metadata field to filter on server-side, so this leans on Notion's own
-// search (best-effort full-text, not a guaranteed exact match) to narrow
-// candidates, then confirms via parseMarkers on each candidate's actual
-// blocks. Bounded to the top 20 search results x first 20 blocks each --
-// same kind of pragmatic ceiling mem/tools.js's own findByEntityId applies
-// (there, a 1000-memory pagination cap; here, a much lower bound since each
-// candidate costs a full extra API call with no cheaper server-side filter
-// available).
+// madmcp-notion-connector-gaps-roadmap).
+//
+// REAL FIX 2026-07-17: the original implementation leaned on notion_search
+// to find candidate pages by entity_id text. Live testing confirmed that's
+// fundamentally broken -- Notion's search index has real lag, and searching
+// for an entity_id string immediately after creating that page (the most
+// common dedup scenario -- "just created something, now checking if it
+// exists") reliably returns zero results. The dedup check was coded
+// correctly but the data source it depended on couldn't answer fast enough,
+// so duplicates were still created.
+//
+// Fix: maintain a dedicated index page (NOTION_INDEX_PAGE_ID, config.js)
+// whose blocks are plain "entity_id | page_id | url" paragraph entries.
+// Reading a page's own blocks via /blocks/{id}/children is a direct,
+// uncached read -- not subject to search-indexing lag -- so this is
+// immediately consistent even right after an entry is appended. Mirrors how
+// mem0 itself does real indexed lookups rather than full-text search.
 async function findPageByEntityId(entity_id) {
-  const data = await notionRequest("/search", {
-    method: "POST",
-    body: { query: entity_id, filter: { value: "page", property: "object" }, page_size: 20 },
-  });
-  for (const page of data.results || []) {
-    const blocksData = await notionRequest(`/blocks/${page.id}/children?page_size=20`);
-    const markers = parseMarkers(blocksData.results || []);
-    if (markers.entity_id === entity_id) {
-      return { pageId: page.id, title: notionPageTitle(page), url: page.url, markers };
+  let indexBlocks;
+  try {
+    const data = await notionRequest(`/blocks/${NOTION_INDEX_PAGE_ID}/children?page_size=100`);
+    indexBlocks = data.results || [];
+  } catch (err) {
+    // Fail loudly rather than silently falling back to nothing found --
+    // silently treating "index unreachable" as "no duplicate exists" would
+    // just reintroduce the exact bug this fix is for.
+    throw new Error(`Notion entity index page (${NOTION_INDEX_PAGE_ID}) is unreachable, so entity_id dedup can't be verified: ${err.message}. Fix NOTION_INDEX_PAGE_ID / the index page's sharing settings before creating entity-tracked pages.`);
+  }
+  for (const b of indexBlocks) {
+    if (b.type !== "paragraph") continue;
+    const entry = parseIndexEntryText(notionRichTextToString(b.paragraph?.rich_text || []));
+    if (!entry || entry.entity_id !== entity_id) continue;
+    try {
+      const page = await notionRequest(`/pages/${entry.page_id}`);
+      const blocksData = await notionRequest(`/blocks/${entry.page_id}/children?page_size=20`);
+      const markers = parseMarkers(blocksData.results || []);
+      return { pageId: entry.page_id, title: notionPageTitle(page), url: page.url, markers };
+    } catch {
+      // Stale index entry (target page deleted/archived outside these
+      // tools) -- treat as not-found so a fresh page can be created, rather
+      // than erroring out on a dangling reference.
+      continue;
     }
   }
   return null;
+}
+
+// Records a new entity_id -> page_id mapping on the index page. Best-effort:
+// if this fails, the page itself was still created successfully, so we
+// don't throw -- but the caller surfaces the failure in its response text
+// since it means the NEXT dedup check for this entity_id won't find it.
+// NOTE: like notion_get_page, this index page is capped at reading/writing
+// within Notion's block-children pagination -- same first-100 limitation as
+// gap #8, not yet fixed here.
+async function appendIndexEntry({ entity_id, page_id, url }) {
+  try {
+    await notionRequest(`/blocks/${NOTION_INDEX_PAGE_ID}/children`, {
+      method: "PATCH",
+      body: { children: [{
+        object: "block", type: "paragraph",
+        paragraph: { rich_text: [{ type: "text", text: { content: buildIndexEntryText({ entity_id, page_id, url }) } }] },
+      }] },
+    });
+    return null;
+  } catch (err) {
+    return err.message;
+  }
 }
 
 export function register(server) {
@@ -138,8 +184,15 @@ export function register(server) {
         method: "POST",
         body: { parent, properties, children },
       });
+      let indexNote = "";
+      if (entity_id) {
+        const indexError = await appendIndexEntry({ entity_id, page_id: data.id, url: data.url });
+        indexNote = indexError
+          ? `\n\n\u26a0\ufe0f Page created, but recording it in the dedup index failed: ${indexError}. Future notion_create_page calls with entity_id "${entity_id}" may not detect this page as a duplicate.`
+          : "";
+      }
       const markerNote = markerBlocks.length ? ` (with ${entity_id ? "entity_id" : ""}${entity_id && status ? " + " : ""}${status ? "status" : ""} marker${markerBlocks.length > 1 ? "s" : ""})` : "";
-      return { content: [{ type: "text", text: `Created Notion page "${title}"${markerNote}\nID: ${data.id}\nURL: ${data.url}` }] };
+      return { content: [{ type: "text", text: `Created Notion page "${title}"${markerNote}\nID: ${data.id}\nURL: ${data.url}${indexNote}` }] };
     }
   );
 
