@@ -193,10 +193,7 @@ export async function replaceSyncedRange({ page_id, contentLines, synced_at }) {
   // Insert new content right after the start marker via Notion's `after`
   // cursor, so it lands inside the range regardless of what (if anything)
   // sits below the end marker.
-  const contentBlocks = (contentLines || []).filter(Boolean).map((text) => ({
-    object: "block", type: "paragraph",
-    paragraph: { rich_text: [{ type: "text", text: { content: text } }] },
-  }));
+  const contentBlocks = (contentLines || []).filter(Boolean).map(textBlock);
   if (contentBlocks.length) {
     await notionRequest(`/blocks/${page_id}/children`, {
       method: "PATCH",
