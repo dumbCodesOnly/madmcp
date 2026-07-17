@@ -82,11 +82,15 @@ export function register(server) {
       const childSummary = (subPages || subDatabases)
         ? `\n\n🔗 ${subPages} subpage(s), ${subDatabases} subdatabase(s) found — use notion_get_page on their IDs above to view them.`
         : "";
+      const markers      = parseMarkers(blocks);
+      const markerLine   = (markers.entity_id || markers.status)
+        ? `\n${markers.entity_id ? `Entity ID: ${markers.entity_id}` : ""}${markers.entity_id && markers.status ? " | " : ""}${markers.status ? `Status: ${markers.status}` : ""}`
+        : "";
       const text =
         `# ${title}\n` +
         `ID: ${page.id}\n` +
         `URL: ${page.url}\n` +
-        `Created: ${page.created_time?.slice(0, 10)} | Last edited: ${page.last_edited_time?.slice(0, 10)}\n\n` +
+        `Created: ${page.created_time?.slice(0, 10)} | Last edited: ${page.last_edited_time?.slice(0, 10)}${markerLine}\n\n` +
         (content || "(no content)") + hasMore + childSummary;
       return { content: [{ type: "text", text }] };
     }
