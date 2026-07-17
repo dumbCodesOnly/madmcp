@@ -8,6 +8,7 @@ import {
   notionRequest, notionPageTitle, notionDatabaseTitle, notionRichTextToString,
   notionBlocksToText, buildMarkerBlocks, statusMarkerBlock, notionBlockPlainText, parseMarkers,
   buildIndexEntryText, parseIndexEntryText, buildChangelogEntryText, isChangelogEntryText,
+  buildRelationBlocks, parseRelationBlocks,
 } from "./client.js";
 
 const STATUS_VALUES = ["open", "resolved", "superseded"];
