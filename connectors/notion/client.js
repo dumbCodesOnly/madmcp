@@ -205,6 +205,92 @@ export function parseRelationBlocks(blocks = []) {
   return relations;
 }
 
+// ---------------------------------------------------------------------------
+// Synced-range marker convention (2026-07-18, mem0->Notion Sync Tool spec --
+// see mem0 entity_id: mem0-notion-sync-tool-spec, "PROTECTING MANUAL EDITS"
+// section, the one piece this spec flagged as needing real design work
+// since nothing else in this file solves "replace this whole block range"
+// -- doUpdatePage's `replacements` only does single-block exact-text swaps).
+//
+// Content written by the sync tool lives between two literal marker blocks:
+//   ⬇️ SYNCED FROM MEM0 (mem0_synced_at: <ISO timestamp>) — DO NOT EDIT BELOW, WILL BE OVERWRITTEN ⬇️
+//   ...synced content blocks...
+//   ⬆️ END SYNCED CONTENT ⬆️
+// Sync logic (replaceSyncedRange, notion/tools.js) only ever touches blocks
+// strictly BETWEEN these two markers -- anything a person adds above the
+// start marker, below the end marker, or as a genuinely separate block
+// elsewhere on the page, is never read or written by the sync tool and
+// survives every future run. The timestamp lives ON the start marker itself
+// (not a separate block) so a re-sync can read the current value and skip
+// the write entirely when the source memory's updated_at hasn't changed --
+// avoiding the no-op rewrite + changelog spam the spec calls out.
+const SYNC_START_PREFIX = "⬇️ SYNCED FROM MEM0 (mem0_synced_at: ";
+const SYNC_START_SUFFIX = ") — DO NOT EDIT BELOW, WILL BE OVERWRITTEN ⬇️";
+const SYNC_END_TEXT     = "⬆️ END SYNCED CONTENT ⬆️";
+
+export function buildSyncStartText(synced_at) {
+  return `${SYNC_START_PREFIX}${synced_at}${SYNC_START_SUFFIX}`;
+}
+
+function parseSyncStartText(text) {
+  if (!text || !text.startsWith(SYNC_START_PREFIX) || !text.endsWith(SYNC_START_SUFFIX)) return null;
+  return text.slice(SYNC_START_PREFIX.length, text.length - SYNC_START_SUFFIX.length);
+}
+
+export function isSyncEndText(text) {
+  return text === SYNC_END_TEXT;
+}
+
+// Builds the full [start marker, ...content blocks, end marker] block list
+// for a brand-new synced range (page has none yet). contentLines is split
+// into one paragraph block per non-empty line, same convention as every
+// other plain-text content writer in this file.
+export function buildSyncRangeBlocks({ synced_at, contentLines }) {
+  const toBlock = (text) => ({
+    object: "block", type: "paragraph",
+    paragraph: { rich_text: [{ type: "text", text: { content: text } }] },
+  });
+  const contentBlocks = (contentLines || []).filter(Boolean).map(toBlock);
+  return [toBlock(buildSyncStartText(synced_at)), ...contentBlocks, toBlock(SYNC_END_TEXT)];
+}
+
+// Scans a page's top-level blocks (same 100-block-page caveat as
+// parseMarkers/parseRelationBlocks above) for an existing synced range.
+// Returns null if no start marker is found, or a match with block IDs so
+// callers can delete/insert around the range without re-searching by text.
+// A start marker with no matching end marker (page edited unexpectedly, or
+// truncated by the 100-block read) is treated as not-found -- safer to
+// append a fresh range than to guess where an unterminated one ends and
+// risk deleting content past it.
+export function findSyncRange(blocks = []) {
+  let startIdx = -1;
+  let synced_at = null;
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    if (b.type !== "paragraph") continue;
+    const text = notionRichTextToString(b.paragraph?.rich_text || []);
+    const parsed = parseSyncStartText(text);
+    if (parsed !== null) { startIdx = i; synced_at = parsed; break; }
+  }
+  if (startIdx === -1) return null;
+  for (let i = startIdx + 1; i < blocks.length; i++) {
+    const b = blocks[i];
+    if (b.type !== "paragraph") continue;
+    const text = notionRichTextToString(b.paragraph?.rich_text || []);
+    if (isSyncEndText(text)) {
+      return {
+        synced_at,
+        startBlockId: blocks[startIdx].id,
+        endBlockId: blocks[i].id,
+        // Blocks strictly between start and end -- exactly what a re-sync
+        // is allowed to delete/replace.
+        innerBlockIds: blocks.slice(startIdx + 1, i).map((bb) => bb.id),
+      };
+    }
+  }
+  return null; // start with no matching end -- treat as not-found, see above
+}
+
 export function notionBlocksToText(blocks = []) {
   return blocks
     .map((b) => {
