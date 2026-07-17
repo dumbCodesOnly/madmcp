@@ -83,6 +83,43 @@ async function appendIndexEntry({ entity_id, page_id, url }) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Shared create-page logic (2026-07-17, gap #6 -- see mem0 entity_id:
+// madmcp-notion-connector-gaps-roadmap). Extracted out of notion_create_page's
+// handler so notion_create_pages_batch can reuse the exact same dedup +
+// marker + index-recording behavior per item, mirroring how mem/tools.js's
+// mem0_add and mem0_add_batch share logic. Returns a plain result object
+// instead of an MCP content block -- callers format the response.
+async function doCreatePage({ parent_id, parent_type, title, content, entity_id, status }) {
+  if (entity_id) {
+    const existing = await findPageByEntityId(entity_id);
+    if (existing) {
+      return { skipped: true, entity_id, existingId: existing.pageId, existingTitle: existing.title, existingUrl: existing.url };
+    }
+  }
+  const parent     = parent_type === "database" ? { database_id: parent_id } : { page_id: parent_id };
+  const properties = parent_type === "database"
+    ? { Name:  { title: [{ text: { content: title } }] } }
+    : { title: { title: [{ text: { content: title } }] } };
+  const markerBlocks  = buildMarkerBlocks({ entity_id, status });
+  const contentBlocks = content
+    ? content.split("\n").filter(Boolean).map((line) => ({
+        object: "block", type: "paragraph",
+        paragraph: { rich_text: [{ type: "text", text: { content: line } }] },
+      }))
+    : [];
+  const children = [...markerBlocks, ...contentBlocks];
+  const data = await notionRequest("/pages", {
+    method: "POST",
+    body: { parent, properties, children },
+  });
+  let indexError = null;
+  if (entity_id) {
+    indexError = await appendIndexEntry({ entity_id, page_id: data.id, url: data.url });
+  }
+  return { skipped: false, id: data.id, url: data.url, title, markerCount: markerBlocks.length, entity_id, status, indexError };
+}
+
 export function register(server) {
 
   server.tool(
