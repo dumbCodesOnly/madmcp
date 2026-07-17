@@ -32,7 +32,7 @@ const STATUS_VALUES = ["open", "resolved", "superseded"];
 // uncached read -- not subject to search-indexing lag -- so this is
 // immediately consistent even right after an entry is appended. Mirrors how
 // mem0 itself does real indexed lookups rather than full-text search.
-async function findPageByEntityId(entity_id) {
+export async function findPageByEntityId(entity_id) {
   let indexBlocks;
   try {
     const data = await notionRequest(`/blocks/${NOTION_INDEX_PAGE_ID}/children?page_size=100`);
@@ -101,7 +101,7 @@ async function appendIndexEntry({ entity_id, page_id, url }) {
 // to track a thing that should be tracked -- so that case now throws
 // instead of silently creating an untracked page. Passing one_off: true is
 // the deliberate opt-out for real one-offs.
-async function doCreatePage({ parent_id, parent_type, title, content, entity_id, status, relations, one_off }) {
+export async function doCreatePage({ parent_id, parent_type, title, content, entity_id, status, relations, one_off }) {
   if (!entity_id && !one_off) {
     throw new Error(`Refusing to create "${title}" without a tracking decision -- pass either entity_id (if this represents an ongoing/stable thing that should be deduped and indexed) or one_off: true (if it's genuinely disposable, e.g. a scratch note or test page). This is a deliberate choice, not a bug -- see notion_create_page's entity_id and one_off param descriptions.`);
   }
@@ -189,7 +189,7 @@ async function appendChangelogEntry(page_id, summary) {
 // unsupported block type) -- the single-item tool catches this to preserve
 // its existing isError response shape; the batch tool lets Promise.allSettled
 // catch it per item, same pattern as mem/tools.js.
-async function doUpdatePage({ page_id, title, append_content, archived, replacements, status, relations }) {
+export async function doUpdatePage({ page_id, title, append_content, archived, replacements, status, relations }) {
   const results = [];
   if (title !== undefined || archived !== undefined) {
     const body = {};
