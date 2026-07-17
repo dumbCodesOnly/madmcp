@@ -144,6 +144,27 @@ export function register(server) {
   );
 
   server.tool(
+    "notion_create_database",
+    "Create a new Notion database inside a parent page, with a given property schema. One-off/setup tool -- most workflows should use notion_create_page instead.",
+    {
+      parent_page_id: z.string().describe("ID of the parent page to create the database under"),
+      title:          z.string().describe("Title of the new database"),
+      properties:     z.record(z.any()).describe("Notion property schema object, e.g. { \"Name\": { \"title\": {} }, \"Status\": { \"select\": { \"options\": [{ \"name\": \"open\" }] } } }"),
+    },
+    async ({ parent_page_id, title, properties }) => {
+      const data = await notionRequest("/databases", {
+        method: "POST",
+        body: {
+          parent: { type: "page_id", page_id: parent_page_id },
+          title: [{ type: "text", text: { content: title } }],
+          properties,
+        },
+      });
+      return { content: [{ type: "text", text: `Created database "${title}"\nID: ${data.id}\nURL: ${data.url}` }] };
+    }
+  );
+
+  server.tool(
     "notion_update_database",
     "Update a Notion database's title, or archive/restore it. Use this instead of notion_update_page for database IDs -- databases live at a separate API endpoint from pages, so notion_update_page returns a 404 if given a database ID.",
     {
