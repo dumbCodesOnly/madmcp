@@ -172,7 +172,7 @@ const EDITABLE_BLOCK_TYPES = ["paragraph", "heading_1", "heading_2", "heading_3"
 // not be found; treated as not-found (append fresh range) rather than a
 // silent corruption risk, same reasoning as findSyncRange's unterminated-
 // range case.
-async function replaceSyncedRange({ page_id, contentLines, synced_at }) {
+export async function replaceSyncedRange({ page_id, contentLines, synced_at }) {
   const blocksData = await notionRequest(`/blocks/${page_id}/children?page_size=100`);
   const blocks = blocksData.results || [];
   const range = findSyncRange(blocks);
