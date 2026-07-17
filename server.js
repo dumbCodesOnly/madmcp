@@ -17,6 +17,7 @@ import * as mem0       from "./connectors/mem/tools.js";
 import * as fetch      from "./connectors/fetch/tools.js";
 import * as cloudflare from "./connectors/cloudflare/tools.js";
 import * as context7   from "./connectors/context7/tools.js";
+import * as sync       from "./connectors/sync/mem0_notion.js";
 
 // Build the MCP server once at startup and reuse it across all requests.
 const mcpServer = new McpServer({
@@ -31,6 +32,7 @@ mem0.register(mcpServer);
 fetch.register(mcpServer);
 cloudflare.register(mcpServer);
 context7.register(mcpServer);
+sync.register(mcpServer);
 
 // Adding a new connector:
 //   import * as myThing from "./connectors/myThing/tools.js";
