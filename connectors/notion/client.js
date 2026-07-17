@@ -138,6 +138,31 @@ export function parseIndexEntryText(text) {
   return { entity_id, page_id, url };
 }
 
+// ---------------------------------------------------------------------------
+// Changelog convention (2026-07-17, gap #4 -- see mem0 entity_id:
+// madmcp-notion-connector-gaps-roadmap). Notion's API exposes no page/block
+// revision-history endpoint (confirmed via docs review -- unlike mem0's
+// native GET /v1/memories/{id}/history/, there's nothing to wrap here), so
+// this is the FIX PLAN's documented fallback: an append-only changelog kept
+// as plain paragraph blocks on the tracked page itself, one entry per
+// state-changing notion_update_page call. Deliberately NOT gated to only
+// entity_id-tracked pages (the original plan's suggestion) -- doing that
+// gate correctly would need an extra blocks-fetch on every title-only/
+// append-only update just to check for a marker, which defeats the point of
+// keeping simple updates cheap. Instead this logs on every page any caller
+// chooses to update via these tools; a page nobody ever calls
+// notion_update_page on accumulates no changelog noise.
+const CHANGELOG_PREFIX = "📜 ";
+
+export function buildChangelogEntryText(summary) {
+  const ts = new Date().toISOString().replace("T", " ").slice(0, 16);
+  return `${CHANGELOG_PREFIX}${ts} UTC — ${summary}`;
+}
+
+export function isChangelogEntryText(text) {
+  return !!text && text.startsWith(CHANGELOG_PREFIX);
+}
+
 export function notionBlocksToText(blocks = []) {
   return blocks
     .map((b) => {
