@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { z } from "zod";
-import { notionRequest, notionPageTitle, notionRichTextToString, notionBlocksToText } from "./client.js";
+import { notionRequest, notionPageTitle, notionDatabaseTitle, notionRichTextToString, notionBlocksToText } from "./client.js";
 
 export function register(server) {
 
@@ -79,6 +79,26 @@ export function register(server) {
         body: { parent, properties, children },
       });
       return { content: [{ type: "text", text: `Created Notion page "${title}"\nID: ${data.id}\nURL: ${data.url}` }] };
+    }
+  );
+
+  server.tool(
+    "notion_update_database",
+    "Update a Notion database's title, or archive/restore it. Use this instead of notion_update_page for database IDs -- databases live at a separate API endpoint from pages, so notion_update_page returns a 404 if given a database ID.",
+    {
+      database_id: z.string().describe("Notion database ID (UUID format, e.g. from notion_search with filter_type: 'database')"),
+      title:       z.string().optional().describe("New title for the database"),
+      archived:    z.boolean().optional().describe("Set true to archive (trash) the database, false to restore"),
+    },
+    async ({ database_id, title, archived }) => {
+      const body = {};
+      if (archived !== undefined) body.archived = archived;
+      if (title    !== undefined) body.title    = [{ type: "text", text: { content: title } }];
+      if (Object.keys(body).length === 0) {
+        return { content: [{ type: "text", text: "No changes made." }] };
+      }
+      const data = await notionRequest(`/databases/${database_id}`, { method: "PATCH", body });
+      return { content: [{ type: "text", text: `Updated database "${notionDatabaseTitle(data)}" (ID: ${data.id}).` }] };
     }
   );
 
