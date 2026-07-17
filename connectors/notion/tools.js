@@ -91,7 +91,7 @@ async function appendIndexEntry({ entity_id, page_id, url }) {
 // marker + index-recording behavior per item, mirroring how mem/tools.js's
 // mem0_add and mem0_add_batch share logic. Returns a plain result object
 // instead of an MCP content block -- callers format the response.
-async function doCreatePage({ parent_id, parent_type, title, content, entity_id, status }) {
+async function doCreatePage({ parent_id, parent_type, title, content, entity_id, status, relations }) {
   if (entity_id) {
     const existing = await findPageByEntityId(entity_id);
     if (existing) {
@@ -102,14 +102,15 @@ async function doCreatePage({ parent_id, parent_type, title, content, entity_id,
   const properties = parent_type === "database"
     ? { Name:  { title: [{ text: { content: title } }] } }
     : { title: { title: [{ text: { content: title } }] } };
-  const markerBlocks  = buildMarkerBlocks({ entity_id, status });
+  const markerBlocks   = buildMarkerBlocks({ entity_id, status });
+  const relationBlocks = buildRelationBlocks(relations || []);
   const contentBlocks = content
     ? content.split("\n").filter(Boolean).map((line) => ({
         object: "block", type: "paragraph",
         paragraph: { rich_text: [{ type: "text", text: { content: line } }] },
       }))
     : [];
-  const children = [...markerBlocks, ...contentBlocks];
+  const children = [...markerBlocks, ...relationBlocks, ...contentBlocks];
   const data = await notionRequest("/pages", {
     method: "POST",
     body: { parent, properties, children },
@@ -118,7 +119,7 @@ async function doCreatePage({ parent_id, parent_type, title, content, entity_id,
   if (entity_id) {
     indexError = await appendIndexEntry({ entity_id, page_id: data.id, url: data.url });
   }
-  return { skipped: false, id: data.id, url: data.url, title, markerCount: markerBlocks.length, entity_id, status, indexError };
+  return { skipped: false, id: data.id, url: data.url, title, markerCount: markerBlocks.length, relationCount: relationBlocks.length, entity_id, status, indexError };
 }
 
 const EDITABLE_BLOCK_TYPES = ["paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item", "numbered_list_item", "to_do"];
