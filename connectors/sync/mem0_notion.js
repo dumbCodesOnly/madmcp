@@ -5,7 +5,7 @@
 
 import { z } from "zod";
 import { mem0Request } from "../mem/client.js";
-import { notionRequest, parseIndexEntryText, notionRichTextToString, parseMarkers, parseRelationBlocks } from "../notion/client.js";
+import { notionRequest, parseIndexEntryText, notionRichTextToString, parseRelationBlocks } from "../notion/client.js";
 import { findPageByEntityId, doCreatePage, doUpdatePage, replaceSyncedRange } from "../notion/tools.js";
 import { MEM0_USER_ID, NOTION_INDEX_PAGE_ID, NOTION_SYNC_PARENT_PAGE_ID } from "../../config.js";
 
