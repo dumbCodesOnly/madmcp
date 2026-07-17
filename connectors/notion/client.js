@@ -29,6 +29,43 @@ export function notionRichTextToString(richText = []) {
   return richText.map((t) => t.plain_text || "").join("");
 }
 
+// ---------------------------------------------------------------------------
+// Rich-text chunking (2026-07-18, bug found via live sync_mem0_to_notion
+// test -- a 2217-char mem0 memory line was sent as a single rich_text
+// segment and rejected outright by Notion's API, which caps
+// rich_text[].text.content at 2000 chars PER SEGMENT). Every paragraph-block
+// builder in this file that wraps arbitrary-length text (mem0 content,
+// append_content, direct notion_create_page content) must go through this
+// instead of building a single {text:{content}} segment, since none of
+// those inputs have a length guarantee. Multiple segments in one rich_text
+// array render as one continuous paragraph, so this doesn't change how the
+// content looks -- it just avoids the hard API rejection.
+const RICH_TEXT_MAX = 2000;
+
+export function chunkRichText(text) {
+  const chunks = [];
+  let rest = text;
+  while (rest.length > RICH_TEXT_MAX) {
+    // Prefer breaking at the last space within the limit so words aren't
+    // split mid-word; fall back to a hard cut if there's no space at all
+    // (e.g. a single unbroken token longer than the limit).
+    let cut = rest.lastIndexOf(" ", RICH_TEXT_MAX);
+    if (cut <= 0) cut = RICH_TEXT_MAX;
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^ /, "");
+  }
+  chunks.push(rest);
+  return chunks.map((c) => ({ type: "text", text: { content: c } }));
+}
+
+// Shared paragraph-block builder using the chunking above. Every spot in
+// this file and tools.js that was building `{ object: "block", type:
+// "paragraph", paragraph: { rich_text: [{ type: "text", text: { content:
+// text } }] } }` for arbitrary-length input now goes through this instead.
+export function textBlock(text) {
+  return { object: "block", type: "paragraph", paragraph: { rich_text: chunkRichText(text) } };
+}
+
 export function notionPageTitle(page) {
   const titleProp = Object.values(page.properties || {}).find((p) => p.type === "title");
   return titleProp ? notionRichTextToString(titleProp.title) : "(untitled)";
