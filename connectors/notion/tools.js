@@ -91,7 +91,20 @@ async function appendIndexEntry({ entity_id, page_id, url }) {
 // marker + index-recording behavior per item, mirroring how mem/tools.js's
 // mem0_add and mem0_add_batch share logic. Returns a plain result object
 // instead of an MCP content block -- callers format the response.
-async function doCreatePage({ parent_id, parent_type, title, content, entity_id, status, relations }) {
+// 2026-07-18: NOT a hard entity_id requirement -- forcing entity_id on
+// every page would pollute the index with genuine scratch/one-off content
+// (test pages, quick notes) that was never meant to be deduped or tracked,
+// which defeats the index's purpose and doesn't match the same tradeoff
+// mem0_add already makes (entity_id optional there too, for the same
+// reason). Instead: require an EXPLICIT choice. Omitting entity_id AND
+// one_off is the actual failure mode worth catching -- someone forgetting
+// to track a thing that should be tracked -- so that case now throws
+// instead of silently creating an untracked page. Passing one_off: true is
+// the deliberate opt-out for real one-offs.
+async function doCreatePage({ parent_id, parent_type, title, content, entity_id, status, relations, one_off }) {
+  if (!entity_id && !one_off) {
+    throw new Error(`Refusing to create "${title}" without a tracking decision -- pass either entity_id (if this represents an ongoing/stable thing that should be deduped and indexed) or one_off: true (if it's genuinely disposable, e.g. a scratch note or test page). This is a deliberate choice, not a bug -- see notion_create_page's entity_id and one_off param descriptions.`);
+  }
   if (entity_id) {
     const existing = await findPageByEntityId(entity_id);
     if (existing) {
