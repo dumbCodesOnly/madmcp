@@ -401,9 +401,15 @@ export function register(server) {
         to_entity_id: z.string().describe("The entity_id of the other tracked page this one relates to"),
         relation:     z.string().describe("The relation type, e.g. 'blocks', 'depends_on', 'relates_to' -- free text"),
       })).optional().describe("Optional list of outgoing relations from this page's entity to others, e.g. [{to_entity_id:'bug-4', relation:'blocks'}]. Stored as visible '🔗 relation -> to_entity_id' marker paragraphs. Only outgoing relations are supported -- see notion_get_page's Relations section for resolved targets."),
+      one_off:     z.boolean().optional().describe("Set true to explicitly opt this page OUT of entity_id tracking -- required if entity_id is omitted. This tool refuses to create a page without either entity_id or one_off: true, so omitting entity_id by accident (rather than on purpose) is caught immediately instead of silently producing an untracked, un-deduped page. Use for genuine one-offs: scratch notes, test pages, throwaway content that will never need dedup or update-in-place."),
     },
-    async ({ parent_id, parent_type, title, content, entity_id, status, relations }) => {
-      const result = await doCreatePage({ parent_id, parent_type, title, content, entity_id, status, relations });
+    async ({ parent_id, parent_type, title, content, entity_id, status, relations, one_off }) => {
+      let result;
+      try {
+        result = await doCreatePage({ parent_id, parent_type, title, content, entity_id, status, relations, one_off });
+      } catch (err) {
+        return { content: [{ type: "text", text: err.message }], isError: true };
+      }
       if (result.skipped) {
         return {
           content: [{
