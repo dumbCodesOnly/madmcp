@@ -24,6 +24,12 @@ export const NOTION_VERSION = "2022-06-28";
 // via env var if that page is ever moved/recreated.
 export const NOTION_INDEX_PAGE_ID = process.env.NOTION_INDEX_PAGE_ID || "3a045572-b580-81a4-80e8-c9e5460520a6";
 
+// Parent page for new pages created by sync_mem0_to_notion (connectors/sync/
+// mem0_notion.js). Defaults to the "Memory Index" page (id below) that the
+// 2026-07-18 manual batch sync populated -- override via env var if that
+// page is ever moved/recreated, same pattern as NOTION_INDEX_PAGE_ID above.
+export const NOTION_SYNC_PARENT_PAGE_ID = process.env.NOTION_SYNC_PARENT_PAGE_ID || "3a045572-b580-81c5-a067-df834ca9ecc2";
+
 export const MEM0_API_KEY   = process.env.MEM0_API_KEY;
 export const MEM0_API       = "https://api.mem0.ai";
 export const MEM0_USER_ID   = process.env.MEM0_USER_ID || "default";
