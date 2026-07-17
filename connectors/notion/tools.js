@@ -294,12 +294,33 @@ export function register(server) {
       const markerLine   = (markers.entity_id || markers.status)
         ? `\n${markers.entity_id ? `Entity ID: ${markers.entity_id}` : ""}${markers.entity_id && markers.status ? " | " : ""}${markers.status ? `Status: ${markers.status}` : ""}`
         : "";
+      // Relations (gap #5) -- resolve up to 5 outgoing relations to their
+      // target's title/url via the same dedup index lookup findPageByEntityId
+      // uses, so a person reading this doesn't have to manually chase each
+      // to_entity_id. Capped at 5 to bound the extra API calls this costs
+      // (each resolution is a full findPageByEntityId, itself 1-2 calls);
+      // remaining relations are still listed, just unresolved.
+      const relations = parseRelationBlocks(allBlocks);
+      let relationsBlock = "";
+      if (relations.length) {
+        const toResolve = relations.slice(0, 5);
+        const resolved = await Promise.all(toResolve.map(async (r) => {
+          try {
+            const target = await findPageByEntityId(r.to_entity_id);
+            return target ? `  🔗 ${r.relation} -> ${r.to_entity_id} ("${target.title}", ${target.url})` : `  🔗 ${r.relation} -> ${r.to_entity_id} (not found -- dangling reference)`;
+          } catch {
+            return `  🔗 ${r.relation} -> ${r.to_entity_id} (couldn't resolve -- index unreachable)`;
+          }
+        }));
+        const remaining = relations.length - toResolve.length;
+        relationsBlock = `\n\nRelations:\n${resolved.join("\n")}${remaining ? `\n  … and ${remaining} more (not resolved, showing first 5)` : ""}`;
+      }
       const text =
         `# ${title}\n` +
         `ID: ${page.id}\n` +
         `URL: ${page.url}\n` +
         `Created: ${page.created_time?.slice(0, 10)} | Last edited: ${page.last_edited_time?.slice(0, 10)}${markerLine}${changelogNote}\n\n` +
-        (content || "(no content)") + hasMore + childSummary;
+        (content || "(no content)") + hasMore + childSummary + relationsBlock;
       return { content: [{ type: "text", text }] };
     }
   );
