@@ -191,45 +191,51 @@ export function register(server) {
       status:      z.enum(STATUS_VALUES).optional().describe("Optional lifecycle status (open/resolved/superseded) for this page. Stored as a visible '🏷️ status: ...' marker paragraph, same convention as entity_id."),
     },
     async ({ parent_id, parent_type, title, content, entity_id, status }) => {
-      if (entity_id) {
-        const existing = await findPageByEntityId(entity_id);
-        if (existing) {
-          return {
-            content: [{
-              type: "text",
-              text:
-                `Not creating — a page already exists for entity_id "${entity_id}" (id: ${existing.pageId}, title: "${existing.title}"). No duplicate was created.\n` +
-                `URL: ${existing.url}\n\n` +
-                `Next step: call notion_get_page on this id to review current content, then notion_update_page (append_content or replacements) to update it instead of creating a new page.`,
-            }],
-          };
-        }
+      const result = await doCreatePage({ parent_id, parent_type, title, content, entity_id, status });
+      if (result.skipped) {
+        return {
+          content: [{
+            type: "text",
+            text:
+              `Not creating — a page already exists for entity_id "${entity_id}" (id: ${result.existingId}, title: "${result.existingTitle}"). No duplicate was created.\n` +
+              `URL: ${result.existingUrl}\n\n` +
+              `Next step: call notion_get_page on this id to review current content, then notion_update_page (append_content or replacements) to update it instead of creating a new page.`,
+          }],
+        };
       }
-      const parent     = parent_type === "database" ? { database_id: parent_id } : { page_id: parent_id };
-      const properties = parent_type === "database"
-        ? { Name:  { title: [{ text: { content: title } }] } }
-        : { title: { title: [{ text: { content: title } }] } };
-      const markerBlocks  = buildMarkerBlocks({ entity_id, status });
-      const contentBlocks = content
-        ? content.split("\n").filter(Boolean).map((line) => ({
-            object: "block", type: "paragraph",
-            paragraph: { rich_text: [{ type: "text", text: { content: line } }] },
-          }))
-        : [];
-      const children = [...markerBlocks, ...contentBlocks];
-      const data = await notionRequest("/pages", {
-        method: "POST",
-        body: { parent, properties, children },
+      const indexNote = result.indexError
+        ? `\n\n\u26a0\ufe0f Page created, but recording it in the dedup index failed: ${result.indexError}. Future notion_create_page calls with entity_id "${entity_id}" may not detect this page as a duplicate.`
+        : "";
+      const markerNote = result.markerCount ? ` (with ${entity_id ? "entity_id" : ""}${entity_id && status ? " + " : ""}${status ? "status" : ""} marker${result.markerCount > 1 ? "s" : ""})` : "";
+      return { content: [{ type: "text", text: `Created Notion page "${title}"${markerNote}\nID: ${result.id}\nURL: ${result.url}${indexNote}` }] };
+    }
+  );
+
+  server.tool(
+    "notion_create_pages_batch",
+    "Create multiple Notion pages in a single call, to reduce round trips. Each item is created independently -- entity_id dedup, marker blocks, and dedup-index recording all apply per item exactly as in notion_create_page. One item failing (e.g. bad parent_id) does not block the others.",
+    {
+      items: z.array(z.object({
+        parent_id:   z.string().describe("ID of the parent page or database"),
+        parent_type: z.enum(["page", "database"]).describe("Whether the parent is a page or a database"),
+        title:       z.string().describe("Title of the new page"),
+        content:     z.string().optional().describe("Plain text content to add as paragraph blocks"),
+        entity_id:   z.string().optional().describe("Optional stable identifier for this page -- see notion_create_page. If a page already exists with this entity_id, this item is skipped (not duplicated) and the existing id/url is reported instead."),
+        status:      z.enum(STATUS_VALUES).optional().describe("Optional lifecycle status (open/resolved/superseded) -- see notion_create_page."),
+      })).min(1).describe("List of pages to create"),
+    },
+    async ({ items }) => {
+      const results = await Promise.allSettled(items.map((item) => doCreatePage(item)));
+      const lines = results.map((r, i) => {
+        const label = items[i].title;
+        if (r.status === "rejected") return `\u2717 [${i}] "${label}" — error: ${r.reason?.message || r.reason}`;
+        const v = r.value;
+        if (v.skipped) return `\u23ed [${i}] "${label}" — skipped, entity_id "${v.entity_id}" already exists (id: ${v.existingId}, title: "${v.existingTitle}").`;
+        const idxNote = v.indexError ? ` \u26a0\ufe0f index record failed: ${v.indexError}` : "";
+        return `\u2713 [${i}] "${label}" — id: ${v.id}${idxNote}`;
       });
-      let indexNote = "";
-      if (entity_id) {
-        const indexError = await appendIndexEntry({ entity_id, page_id: data.id, url: data.url });
-        indexNote = indexError
-          ? `\n\n\u26a0\ufe0f Page created, but recording it in the dedup index failed: ${indexError}. Future notion_create_page calls with entity_id "${entity_id}" may not detect this page as a duplicate.`
-          : "";
-      }
-      const markerNote = markerBlocks.length ? ` (with ${entity_id ? "entity_id" : ""}${entity_id && status ? " + " : ""}${status ? "status" : ""} marker${markerBlocks.length > 1 ? "s" : ""})` : "";
-      return { content: [{ type: "text", text: `Created Notion page "${title}"${markerNote}\nID: ${data.id}\nURL: ${data.url}${indexNote}` }] };
+      const created = results.filter((r) => r.status === "fulfilled" && !r.value.skipped).length;
+      return { content: [{ type: "text", text: `${created}/${items.length} created.\n\n${lines.join("\n")}` }] };
     }
   );
 
