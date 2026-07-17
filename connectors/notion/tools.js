@@ -120,6 +120,74 @@ async function doCreatePage({ parent_id, parent_type, title, content, entity_id,
   return { skipped: false, id: data.id, url: data.url, title, markerCount: markerBlocks.length, entity_id, status, indexError };
 }
 
+const EDITABLE_BLOCK_TYPES = ["paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item", "numbered_list_item", "to_do"];
+
+// ---------------------------------------------------------------------------
+// Shared update-page logic (2026-07-17, gap #6 -- mirrors doCreatePage above).
+// Extracted out of notion_update_page's handler so notion_update_pages_batch
+// can reuse the exact same title/append_content/archived/replacements/status
+// behavior per item. Returns an array of result strings on success, or
+// THROWS on any abort condition (ambiguous/missing replacement match,
+// unsupported block type) -- the single-item tool catches this to preserve
+// its existing isError response shape; the batch tool lets Promise.allSettled
+// catch it per item, same pattern as mem/tools.js.
+async function doUpdatePage({ page_id, title, append_content, archived, replacements, status }) {
+  const results = [];
+  if (title !== undefined || archived !== undefined) {
+    const body = {};
+    if (archived !== undefined) body.archived = archived;
+    if (title    !== undefined) body.properties = { title: { title: [{ text: { content: title } }] } };
+    const data = await notionRequest(`/pages/${page_id}`, { method: "PATCH", body });
+    results.push(`Updated page "${notionPageTitle(data)}" (ID: ${data.id}).`);
+  }
+  if (append_content) {
+    const children = append_content.split("\n").filter(Boolean).map((line) => ({
+      object: "block", type: "paragraph",
+      paragraph: { rich_text: [{ type: "text", text: { content: line } }] },
+    }));
+    await notionRequest(`/blocks/${page_id}/children`, { method: "PATCH", body: { children } });
+    results.push(`Appended ${children.length} paragraph(s) to page.`);
+  }
+  if (replacements?.length) {
+    const blocksData = await notionRequest(`/blocks/${page_id}/children?page_size=100`);
+    const blocks = blocksData.results || [];
+    for (const { find, replace } of replacements) {
+      const matches = blocks.filter((b) => notionBlockPlainText(b) === find);
+      const trunc = (s) => s.slice(0, 60) + (s.length > 60 ? "…" : "");
+      if (matches.length === 0) {
+        throw new Error(`Update aborted, nothing further written — "${trunc(find)}" was not found among this page's top-level blocks (first 100). It may be nested inside a toggle/column, or the page may have more than 100 blocks — re-check with notion_get_page.`);
+      }
+      if (matches.length > 1) {
+        throw new Error(`Update aborted, nothing further written — "${trunc(find)}" matches ${matches.length} blocks, but must be unique. Include more surrounding context in "find" to disambiguate.`);
+      }
+      const block = matches[0];
+      const type  = block.type;
+      if (!EDITABLE_BLOCK_TYPES.includes(type)) {
+        throw new Error(`Update aborted, nothing further written — matched block is type "${type}", which notion_update_page can't edit in place yet (supported: ${EDITABLE_BLOCK_TYPES.join(", ")}).`);
+      }
+      const patchBody = { [type]: { rich_text: [{ type: "text", text: { content: replace } }] } };
+      if (type === "to_do") patchBody[type].checked = block.to_do?.checked ?? false;
+      await notionRequest(`/blocks/${block.id}`, { method: "PATCH", body: patchBody });
+      results.push(`Replaced block ("${trunc(find)}" → "${trunc(replace)}").`);
+    }
+  }
+  if (status !== undefined) {
+    const blocksData = await notionRequest(`/blocks/${page_id}/children?page_size=100`);
+    const markers = parseMarkers(blocksData.results || []);
+    if (markers.statusBlockId) {
+      await notionRequest(`/blocks/${markers.statusBlockId}`, {
+        method: "PATCH",
+        body: statusMarkerBlock(status),
+      });
+      results.push(`Status updated to "${status}" (was "${markers.status}").`);
+    } else {
+      await notionRequest(`/blocks/${page_id}/children`, { method: "PATCH", body: { children: [statusMarkerBlock(status)] } });
+      results.push(`Status marker added: "${status}" (page had none before).`);
+    }
+  }
+  return results;
+}
+
 export function register(server) {
 
   server.tool(
@@ -280,8 +348,6 @@ export function register(server) {
     }
   );
 
-  const EDITABLE_BLOCK_TYPES = ["paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item", "numbered_list_item", "to_do"];
-
   server.tool(
     "notion_update_page",
     "Update a Notion page's title or properties, append text content to it, make a targeted in-place edit to an existing block (replacements), or change its lifecycle status marker.",
@@ -297,60 +363,40 @@ export function register(server) {
       status:         z.enum(STATUS_VALUES).optional().describe("Set this page's lifecycle status (open/resolved/superseded). Updates the existing '🏷️ status: ...' marker block in place if one exists, or appends a new marker block if the page has none yet."),
     },
     async ({ page_id, title, append_content, archived, replacements, status }) => {
-      const results = [];
-      if (title !== undefined || archived !== undefined) {
-        const body = {};
-        if (archived !== undefined) body.archived = archived;
-        if (title    !== undefined) body.properties = { title: { title: [{ text: { content: title } }] } };
-        const data = await notionRequest(`/pages/${page_id}`, { method: "PATCH", body });
-        results.push(`Updated page "${notionPageTitle(data)}" (ID: ${data.id}).`);
+      try {
+        const results = await doUpdatePage({ page_id, title, append_content, archived, replacements, status });
+        return { content: [{ type: "text", text: results.join("\n") || "No changes made." }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: err.message }], isError: true };
       }
-      if (append_content) {
-        const children = append_content.split("\n").filter(Boolean).map((line) => ({
-          object: "block", type: "paragraph",
-          paragraph: { rich_text: [{ type: "text", text: { content: line } }] },
-        }));
-        await notionRequest(`/blocks/${page_id}/children`, { method: "PATCH", body: { children } });
-        results.push(`Appended ${children.length} paragraph(s) to page.`);
-      }
-      if (replacements?.length) {
-        const blocksData = await notionRequest(`/blocks/${page_id}/children?page_size=100`);
-        const blocks = blocksData.results || [];
-        for (const { find, replace } of replacements) {
-          const matches = blocks.filter((b) => notionBlockPlainText(b) === find);
-          const trunc = (s) => s.slice(0, 60) + (s.length > 60 ? "…" : "");
-          if (matches.length === 0) {
-            return { content: [{ type: "text", text: `Update aborted, nothing further written — "${trunc(find)}" was not found among this page's top-level blocks (first 100). It may be nested inside a toggle/column, or the page may have more than 100 blocks — re-check with notion_get_page.` }], isError: true };
-          }
-          if (matches.length > 1) {
-            return { content: [{ type: "text", text: `Update aborted, nothing further written — "${trunc(find)}" matches ${matches.length} blocks, but must be unique. Include more surrounding context in "find" to disambiguate.` }], isError: true };
-          }
-          const block = matches[0];
-          const type  = block.type;
-          if (!EDITABLE_BLOCK_TYPES.includes(type)) {
-            return { content: [{ type: "text", text: `Update aborted, nothing further written — matched block is type "${type}", which notion_update_page can't edit in place yet (supported: ${EDITABLE_BLOCK_TYPES.join(", ")}).` }], isError: true };
-          }
-          const patchBody = { [type]: { rich_text: [{ type: "text", text: { content: replace } }] } };
-          if (type === "to_do") patchBody[type].checked = block.to_do?.checked ?? false;
-          await notionRequest(`/blocks/${block.id}`, { method: "PATCH", body: patchBody });
-          results.push(`Replaced block ("${trunc(find)}" → "${trunc(replace)}").`);
-        }
-      }
-      if (status !== undefined) {
-        const blocksData = await notionRequest(`/blocks/${page_id}/children?page_size=100`);
-        const markers = parseMarkers(blocksData.results || []);
-        if (markers.statusBlockId) {
-          await notionRequest(`/blocks/${markers.statusBlockId}`, {
-            method: "PATCH",
-            body: statusMarkerBlock(status),
-          });
-          results.push(`Status updated to "${status}" (was "${markers.status}").`);
-        } else {
-          await notionRequest(`/blocks/${page_id}/children`, { method: "PATCH", body: { children: [statusMarkerBlock(status)] } });
-          results.push(`Status marker added: "${status}" (page had none before).`);
-        }
-      }
-      return { content: [{ type: "text", text: results.join("\n") || "No changes made." }] };
+    }
+  );
+
+  server.tool(
+    "notion_update_pages_batch",
+    "Update multiple Notion pages in a single call, to reduce round trips. Each item supports the same title/append_content/archived/replacements/status behavior as notion_update_page. One item failing (e.g. an ambiguous replacement match) does not block the others.",
+    {
+      items: z.array(z.object({
+        page_id:        z.string().describe("Notion page ID to update"),
+        title:          z.string().optional().describe("New title for the page"),
+        append_content: z.string().optional().describe("Plain text to append as new paragraph blocks"),
+        archived:       z.boolean().optional().describe("Set true to archive (trash) the page, false to restore"),
+        replacements:   z.array(z.object({
+          find:    z.string().describe("Exact plain text of an existing top-level block -- must match exactly one block"),
+          replace: z.string().describe("New plain text for that block"),
+        })).optional().describe("Targeted find/replace edits for this page -- see notion_update_page for matching rules."),
+        status:         z.enum(STATUS_VALUES).optional().describe("Set this page's lifecycle status -- see notion_update_page."),
+      })).min(1).describe("List of page updates to apply"),
+    },
+    async ({ items }) => {
+      const results = await Promise.allSettled(items.map((item) => doUpdatePage(item)));
+      const lines = results.map((r, i) => {
+        const label = items[i].page_id;
+        if (r.status === "rejected") return `\u2717 [${i}] ${label} — ${r.reason?.message || r.reason}`;
+        return `\u2713 [${i}] ${label} — ${r.value.join("; ") || "no changes made"}`;
+      });
+      const succeeded = results.filter((r) => r.status === "fulfilled").length;
+      return { content: [{ type: "text", text: `${succeeded}/${items.length} updated.\n\n${lines.join("\n")}` }] };
     }
   );
 }
