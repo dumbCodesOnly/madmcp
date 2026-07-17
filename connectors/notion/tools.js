@@ -501,6 +501,10 @@ export function register(server) {
           replace: z.string().describe("New plain text for that block"),
         })).optional().describe("Targeted find/replace edits for this page -- see notion_update_page for matching rules."),
         status:         z.enum(STATUS_VALUES).optional().describe("Set this page's lifecycle status -- see notion_update_page."),
+        relations:      z.array(z.object({
+          to_entity_id: z.string().describe("The entity_id of the other entity this one relates to"),
+          relation:     z.string().describe("The relation type -- see notion_update_page"),
+        })).optional().describe("New outgoing relations for this page -- see notion_update_page (whole-set replace)."),
       })).min(1).describe("List of page updates to apply"),
     },
     async ({ items }) => {
