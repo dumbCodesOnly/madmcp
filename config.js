@@ -11,6 +11,19 @@ export const NOTION_TOKEN   = process.env.NOTION_TOKEN;
 export const NOTION_API     = "https://api.notion.com/v1";
 export const NOTION_VERSION = "2022-06-28";
 
+// Dedicated index page used for entity_id -> page_id dedup lookups (2026-07-17
+// real fix for gap #1, see mem0 entity_id: madmcp-notion-connector-gaps-roadmap).
+// notion_search has real indexing lag -- searching for an entity_id string
+// immediately after creating that page can return zero results, which let
+// duplicates through despite the dedup check being coded correctly. Reading
+// a page's own blocks via /blocks/{id}/children is a direct, uncached read
+// with no such lag, so entity_id -> page_id mappings are stored as plain
+// paragraph blocks on one well-known page instead of being looked up via
+// search. Default points at a page created 2026-07-17 under the "Claude"
+// page (id 3a045572-b580-8007-b622-c120958557bf) for this purpose; override
+// via env var if that page is ever moved/recreated.
+export const NOTION_INDEX_PAGE_ID = process.env.NOTION_INDEX_PAGE_ID || "3a045572-b580-81a4-80e8-c9e5460520a6";
+
 export const MEM0_API_KEY   = process.env.MEM0_API_KEY;
 export const MEM0_API       = "https://api.mem0.ai";
 export const MEM0_USER_ID   = process.env.MEM0_USER_ID || "default";
