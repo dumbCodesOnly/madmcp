@@ -9,11 +9,11 @@
 [![Connectors](https://img.shields.io/badge/connectors-GitHub%20%C2%B7%20Cloudflare%20%C2%B7%20Notion%20%C2%B7%20Mem0%20%C2%B7%20Fetch-7CA6D6?style=flat-square)](#connectors--tools)
 [![License](https://img.shields.io/badge/license-AGPL--3.0%20%2B%20Commons%20Clause-blue?style=flat-square)](./LICENSE)
 
-<a href="https://dumbCodesOnly.github.io/madmcp/demo.html">
+<a href="https://allocsys.github.io/madmcp/demo.html">
   <img src="https://readme-typing-svg.demolab.com?font=IBM+Plex+Mono&size=15&duration=2600&pause=900&color=E8A33D&center=true&vCenter=true&width=580&lines=%E2%86%92+tool_call+search_code(%7B+query%3A+%22legacyPricingService%22+%7D);%E2%9C%93+200+%C2%B7+118ms+%C2%B7+1+match%2C+no+timeout+set;%E2%86%92+tool_call+create_pull_request(%7B+title%3A+%22Add+timeout+guard%22+%7D);%E2%9C%93+PR+%23482+opened+against+main;%E2%86%92+tool_call+mem0_add(%7B+entity_id%3A+%22edge-router-incident%22+%7D)" alt="typing animation of a madmcp tool-call trace" />
 </a>
 
-**[▶ Watch the live protocol trace](https://dumbCodesOnly.github.io/madmcp/demo.html)**
+**[▶ Watch the live protocol trace](https://allocsys.github.io/madmcp/demo.html)**
 
 </div>
 
@@ -38,8 +38,8 @@ yet, open `demo.html` directly.)
 
 ## Deploy & connect (quickstart)
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/dumbCodesOnly/madmcp)
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/dumbCodesOnly/madmcp&env=MCP_SHARED_KEY,GITHUB_TOKEN,NOTION_TOKEN,MEM0_API_KEY,CLOUDFLARE_API_TOKEN,CLOUDFLARE_ACCOUNT_ID&envDescription=Generate+a+long+random+string+yourself+for+MCP_SHARED_KEY+(Vercel+can%27t+auto-generate+it).+Leave+any+connector+token+blank+to+skip+it.&envLink=https://github.com/dumbCodesOnly/madmcp%23configuration&project-name=manufact-mcp-server&repository-name=manufact-mcp-server)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/allocsys/madmcp)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/allocsys/madmcp&env=MCP_SHARED_KEY,GITHUB_TOKEN,NOTION_TOKEN,MEM0_API_KEY,CLOUDFLARE_API_TOKEN,CLOUDFLARE_ACCOUNT_ID&envDescription=Generate+a+long+random+string+yourself+for+MCP_SHARED_KEY+(Vercel+can%27t+auto-generate+it).+Leave+any+connector+token+blank+to+skip+it.&envLink=https://github.com/allocsys/madmcp%23configuration&project-name=manufact-mcp-server&repository-name=manufact-mcp-server)
 
 Get tokens, deploy, connect to Claude — in that order.
 
@@ -172,7 +172,7 @@ All tokens are optional independently — a connector's tools fail at call time
 | `NOTION_TOKEN` | Notion tools |
 | `MEM0_API_KEY` | Mem0 tools (`MEM0_USER_ID` optional, defaults to `default`) |
 | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | Cloudflare tools |
-| `DEFAULT_OWNER` | Default GitHub owner when omitted from a call (defaults to `dumbCodesOnly`) |
+| `DEFAULT_OWNER` | Default GitHub owner when omitted from a call (defaults to `allocsys`) |
 | `MCP_SHARED_KEY` | Shared-secret auth for `/mcp`. Unset = endpoint is open to anyone with the URL — set this in any real deployment. |
 | `IP_ALLOWLIST_ENABLED` | Set `false` to disable the IP allowlist (default: enabled) |
 | `ALLOWED_IP_RANGES` | Comma-separated CIDR ranges allowed to call `/mcp` (defaults to Anthropic's published connector range) |
