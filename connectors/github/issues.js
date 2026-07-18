@@ -36,15 +36,22 @@ export function register(server) {
       ];
 
       if (include_comments && data.comments > 0) {
+        // NOTE: the issue-comments endpoint does NOT support sort/direction
+        // query params (unlike PR review-comments) -- it always returns
+        // oldest-first. To show the most recent `max_comments` when a issue
+        // has more comments than that, we must fetch the last page rather
+        // than the first.
         const perPage = Math.min(Math.max(max_comments, 1), 100);
+        let page = 1;
+        if (data.comments > perPage) {
+          const totalPages = Math.ceil(data.comments / perPage);
+          page = totalPages; // last page = most recent comments
+        }
         const commentsData = await githubRequest(
-          `/repos/${owner}/${repo}/issues/${issue_number}/comments?per_page=${perPage}&sort=created&direction=desc`
+          `/repos/${owner}/${repo}/issues/${issue_number}/comments?per_page=${perPage}&page=${page}`
         );
-        // Re-sort ascending (oldest first) for a natural reading order, since
-        // the API call above fetches the most recent N via direction=desc.
-        const ordered = [...commentsData].reverse();
-        lines.push("", `--- comments (${ordered.length} of ${data.comments} shown) ---`);
-        for (const c of ordered) {
+        lines.push("", `--- comments (${commentsData.length} most recent of ${data.comments} shown) ---`);
+        for (const c of commentsData) {
           lines.push("", `[${c.user.login} | ${c.created_at.slice(0, 10)}]`, c.body || "(empty)");
         }
       } else if (include_comments) {
