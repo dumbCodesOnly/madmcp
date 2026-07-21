@@ -113,12 +113,31 @@ export async function doCreatePage({ parent_id, parent_type, title, content, ent
       return { skipped: true, entity_id, existingId: existing.pageId, existingTitle: existing.title, existingUrl: existing.url };
     }
   }
+
+  // Deterministic (no-LLM, no-mem0) related-page detection -- see
+  // linking.js header comment and Notion plan page (entity_id:
+  // plan-notion-autolink-heuristic). Best-effort: a failure here (e.g.
+  // Notion search unreachable) should never block page creation, since this
+  // is a convenience layer on top of an otherwise-complete create call.
+  let linkCandidates = { strong: [], medium: [] };
+  try {
+    linkCandidates = await findLinkCandidates({ title, content });
+  } catch {
+    // swallow -- see comment above
+  }
+  const explicitRelations = relations || [];
+  const explicitTargets   = new Set(explicitRelations.map((r) => r.to_entity_id));
+  const autoRelations = linkCandidates.strong
+    .filter((c) => c.entity_id && c.entity_id !== entity_id && !explicitTargets.has(c.entity_id))
+    .map((c) => ({ to_entity_id: c.entity_id, relation: "relates_to" }));
+  const mergedRelations = [...explicitRelations, ...autoRelations];
+
   const parent     = parent_type === "database" ? { database_id: parent_id } : { page_id: parent_id };
   const properties = parent_type === "database"
     ? { Name:  { title: [{ text: { content: title } }] } }
     : { title: { title: [{ text: { content: title } }] } };
   const markerBlocks   = buildMarkerBlocks({ entity_id, status });
-  const relationBlocks = buildRelationBlocks(relations || []);
+  const relationBlocks = buildRelationBlocks(mergedRelations);
   const contentBlocks = content
     ? content.split("\n").filter(Boolean).map(textBlock)
     : [];
