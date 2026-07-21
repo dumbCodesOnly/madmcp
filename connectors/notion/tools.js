@@ -11,7 +11,7 @@ import {
   buildRelationBlocks, parseRelationBlocks,
   buildSyncStartText, buildSyncRangeBlocks, findSyncRange, textBlock,
 } from "./client.js";
-import { findLinkCandidates } from "./linking.js";
+import { findLinkCandidates, extractTags, findTagOverlapCandidates } from "./linking.js";
 
 const STATUS_VALUES = ["open", "resolved", "superseded"];
 
@@ -71,13 +71,13 @@ export async function findPageByEntityId(entity_id) {
 // NOTE: like notion_get_page, this index page is capped at reading/writing
 // within Notion's block-children pagination -- same first-100 limitation as
 // gap #8, not yet fixed here.
-async function appendIndexEntry({ entity_id, page_id, url }) {
+async function appendIndexEntry({ entity_id, page_id, url, tags }) {
   try {
     await notionRequest(`/blocks/${NOTION_INDEX_PAGE_ID}/children`, {
       method: "PATCH",
       body: { children: [{
         object: "block", type: "paragraph",
-        paragraph: { rich_text: [{ type: "text", text: { content: buildIndexEntryText({ entity_id, page_id, url }) } }] },
+        paragraph: { rich_text: [{ type: "text", text: { content: buildIndexEntryText({ entity_id, page_id, url, tags }) } }] },
       }] },
     });
     return null;
@@ -148,7 +148,7 @@ export async function doCreatePage({ parent_id, parent_type, title, content, ent
   });
   let indexError = null;
   if (entity_id) {
-    indexError = await appendIndexEntry({ entity_id, page_id: data.id, url: data.url });
+    indexError = await appendIndexEntry({ entity_id, page_id: data.id, url: data.url, tags: [...extractTags(content || "")] });
   }
   return { skipped: false, id: data.id, url: data.url, title, markerCount: markerBlocks.length, relationCount: relationBlocks.length, entity_id, status, indexError, linkCandidates, autoRelations };
 }
