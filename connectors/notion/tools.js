@@ -495,10 +495,14 @@ export function register(server) {
       const autoLinkNote = result.autoRelations?.length
         ? `\n\n\ud83d\udd17 Auto-linked (identifier/cross-reference match): ${result.autoRelations.map((r) => r.to_entity_id).join(", ")}`
         : "";
+      const unlinkableStrong = (result.linkCandidates?.strong || []).filter((c) => !c.entity_id);
+      const unlinkedNote = unlinkableStrong.length
+        ? `\n\n\ud83d\udd0e Strong match found but not auto-linked (candidate has no entity_id to attach a relation to): ${unlinkableStrong.map((c) => `"${c.title}" (${c.url}) -- ${c.reason}`).join("; ")}`
+        : "";
       const candidateNote = result.linkCandidates?.medium?.length
         ? `\n\n\ud83e\udd14 Possible related page(s) (tag overlap, not auto-linked): ${result.linkCandidates.medium.map((c) => `"${c.title}" (${c.url})`).join("; ")}`
         : "";
-      return { content: [{ type: "text", text: `Created Notion page "${title}"${markerNote}\nID: ${result.id}\nURL: ${result.url}${indexNote}${autoLinkNote}${candidateNote}` }] };
+      return { content: [{ type: "text", text: `Created Notion page "${title}"${markerNote}\nID: ${result.id}\nURL: ${result.url}${indexNote}${autoLinkNote}${unlinkedNote}${candidateNote}` }] };
     }
   );
 
