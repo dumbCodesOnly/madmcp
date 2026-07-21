@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { z } from "zod";
-import { githubRequest } from "./client.js";
+import { githubRequest, githubGraphQL } from "./client.js";
 import { DEFAULT_OWNER } from "../../config.js";
 
 export function register(server) {
@@ -143,7 +143,7 @@ export function register(server) {
 
   server.tool(
     "update_pull_request",
-    "Edit an existing pull request's title, description body, base branch, or open/closed state. Use this to update a PR's description after review feedback, rename it, or close it without merging.",
+    "Edit an existing pull request's title, description body, base branch, open/closed state, or draft status. Use this to update a PR's description after review feedback, rename it, close it without merging, or convert it from draft to ready for review.",
     {
       owner:       z.string().describe("Repository owner (user or org)"),
       repo:        z.string().describe("Repository name"),
@@ -152,22 +152,44 @@ export function register(server) {
       body:        z.string().optional().describe("New PR description body (replaces the existing description entirely)"),
       state:       z.enum(["open", "closed"]).optional().describe("Set to 'closed' to close the PR without merging, or 'open' to reopen it"),
       base:        z.string().optional().describe("Change the base branch this PR merges into"),
+      ready:       z.boolean().optional().describe("Set to true to convert a draft PR to ready for review. GitHub's REST API has no field for this, so it's done via the markPullRequestReadyForReview GraphQL mutation under the hood. No effect (besides a no-op notice) if the PR is already non-draft. There's no way to convert ready back to draft via the API."),
     },
-    async ({ owner, repo, pull_number, title, body, state, base }) => {
+    async ({ owner, repo, pull_number, title, body, state, base, ready }) => {
       const patch = {};
       if (title !== undefined) patch.title = title;
       if (body !== undefined) patch.body = body;
       if (state !== undefined) patch.state = state;
       if (base !== undefined) patch.base = base;
-      if (Object.keys(patch).length === 0) {
-        return { content: [{ type: "text", text: "No fields provided to update — pass at least one of title, body, state, or base." }] };
+
+      if (Object.keys(patch).length === 0 && ready === undefined) {
+        return { content: [{ type: "text", text: "No fields provided to update — pass at least one of title, body, state, base, or ready." }] };
       }
-      const data = await githubRequest(`/repos/${owner}/${repo}/pulls/${pull_number}`, {
-        method: "PATCH",
-        body: patch,
-      });
-      const updated = Object.keys(patch).join(", ");
-      return { content: [{ type: "text", text: `Updated PR #${pull_number} (${updated}).\n${data.html_url}` }] };
+
+      const results = [];
+
+      if (ready === true) {
+        const pr = await githubRequest(`/repos/${owner}/${repo}/pulls/${pull_number}`);
+        if (!pr.draft) {
+          results.push(`PR #${pull_number} is already ready for review (not a draft) — no change made.`);
+        } else {
+          await githubGraphQL(
+            `mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { number isDraft } } }`,
+            { id: pr.node_id }
+          );
+          results.push(`PR #${pull_number} converted from draft to ready for review.`);
+        }
+      }
+
+      if (Object.keys(patch).length > 0) {
+        const data = await githubRequest(`/repos/${owner}/${repo}/pulls/${pull_number}`, {
+          method: "PATCH",
+          body: patch,
+        });
+        const updated = Object.keys(patch).join(", ");
+        results.push(`Updated PR #${pull_number} (${updated}).\n${data.html_url}`);
+      }
+
+      return { content: [{ type: "text", text: results.join("\n\n") }] };
     }
   );
 
