@@ -7,9 +7,11 @@
 // the mem0->Notion Memory Index (sync/mem0_notion.js output), but scope was
 // corrected -- Notion tooling is meant to become independent of mem0. This
 // module uses ONLY notion_search + page content already reachable via
-// existing Notion API calls (notionRequest). No mem0 read, no LLM call, no
-// external API key. See Notion plan page (entity_id:
-// plan-notion-autolink-heuristic) for the full writeup and tradeoffs.
+// existing Notion API calls (notionRequest), plus the dedup index page
+// (NOTION_INDEX_PAGE_ID) for Signal 3 -- see the structural-fix comment on
+// findTagOverlapCandidates below. No mem0 read, no LLM call, no external API
+// key. See Notion plan page (entity_id: plan-notion-autolink-heuristic) for
+// the full writeup and tradeoffs.
 //
 // KNOWN LIMITATION: purely syntactic, no semantic/conceptual matching. Will
 // miss related pages that share no identifier, explicit cross-reference, or
@@ -18,7 +20,8 @@
 // plan page for the "workers-sdk RPC leak wouldn't have been caught" example.
 // ---------------------------------------------------------------------------
 
-import { notionRequest, notionPageTitle, notionBlocksToText, parseMarkers } from "./client.js";
+import { notionRequest, notionPageTitle, notionBlocksToText, parseMarkers, notionRichTextToString, parseIndexEntryText } from "./client.js";
+import { NOTION_INDEX_PAGE_ID } from "../../config.js";
 
 const STOPWORDS = new Set([
   "the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "with",
@@ -104,7 +107,12 @@ export function scoreCandidate({ title, content, tags, createdAt }, candidate) {
   }
 
   // Signal 3: tag overlap within a 7-day window. Medium confidence only --
-  // never auto-linked, just surfaced as a candidate.
+  // never auto-linked, just surfaced as a candidate. NOTE: this in-memory
+  // path only ever fires when both pages happen to already be in hand (e.g.
+  // a candidate surfaced via the Signal 1/2 notion_search pass also happens
+  // to share tags). The primary, reliable path for Signal 3 is
+  // findTagOverlapCandidates below, which reads the dedup index directly
+  // instead of depending on notion_search turning the candidate up at all.
   const candTags = candidate.tags || extractTags(candidate.content || "");
   const shared = [...(tags || new Set())].filter((t) => candTags.has(t));
   if (shared.length >= 2 && createdAt && candidate.createdAt) {
@@ -127,19 +135,91 @@ export function scoreCandidate({ title, content, tags, createdAt }, candidate) {
 }
 
 const MAX_CANDIDATES_TO_SCORE = 8;
-const MAX_TAG_QUERIES = 2;
+const MAX_TAG_CANDIDATES_TO_RESOLVE = 8;
+const TAG_OVERLAP_WINDOW_DAYS = 7;
+
+// ---------------------------------------------------------------------------
+// STRUCTURAL FIX FOR SIGNAL 3 (2026-07-21, see Notion plan page entity_id:
+// plan-notion-autolink-heuristic).
+//
+// ROOT CAUSE (confirmed via live test): Notion's /search endpoint matches on
+// page TITLE, not body full-text. Tags live only in body text ("Tags: a, b,
+// c" lines), never in titles -- so a tag string can never be found by
+// notion_search, no matter how the query is built. The earlier fix attempt
+// (commit a558fff, querying notion_search per tag) is harmless but
+// ineffective and is superseded by this function.
+//
+// FIX: reuse this codebase's existing precedent for the exact same class of
+// problem -- findPageByEntityId (tools.js) already solved "notion_search has
+// real lag / doesn't reliably find things" for entity_id dedup by
+// maintaining a dedicated index page (NOTION_INDEX_PAGE_ID) whose blocks are
+// read directly via /blocks/{id}/children -- a direct, uncached read, not
+// subject to search-indexing lag or title-only matching. Signal 3 gets the
+// same fix: index entries now carry each tracked page's tags (see
+// buildIndexEntryText/parseIndexEntryText in client.js), so tag-overlap
+// discovery reads the index directly instead of calling notion_search at
+// all.
+//
+// SCOPE LIMIT (accepted tradeoff): this only makes tag overlap discoverable
+// for entity_id-tracked pages, since only those get an index entry at all.
+// A freeform/untracked (one_off) page can't participate in tag-based
+// discovery -- same limitation relations/auto-linking already have.
+// Consistent with the rest of this system's design (tracking is opt-in via
+// entity_id).
+export async function findTagOverlapCandidates({ tags, createdAt }) {
+  if (!tags || !tags.size) return [];
+
+  let indexBlocks;
+  try {
+    const data = await notionRequest(`/blocks/${NOTION_INDEX_PAGE_ID}/children?page_size=100`);
+    indexBlocks = data.results || [];
+  } catch {
+    // Best-effort, same as the rest of findLinkCandidates -- an unreachable
+    // index shouldn't block page creation, it just means Signal 3 finds
+    // nothing this time.
+    return [];
+  }
+
+  const overlapping = [];
+  for (const b of indexBlocks) {
+    if (b.type !== "paragraph") continue;
+    const entry = parseIndexEntryText(notionRichTextToString(b.paragraph?.rich_text || []));
+    if (!entry || !entry.tags.length) continue;
+    const shared = entry.tags.filter((t) => tags.has(t));
+    if (shared.length >= 2) overlapping.push({ entry, shared });
+  }
+  if (!overlapping.length) return [];
+
+  const candidates = [];
+  for (const { entry, shared } of overlapping.slice(0, MAX_TAG_CANDIDATES_TO_RESOLVE)) {
+    let page;
+    try {
+      page = await notionRequest(`/pages/${entry.page_id}`);
+    } catch {
+      continue; // stale index entry (target page deleted/archived) -- skip, same as findPageByEntityId
+    }
+    if (createdAt && page.created_time) {
+      const days = Math.abs((new Date(createdAt) - new Date(page.created_time)) / 86400000);
+      if (days > TAG_OVERLAP_WINDOW_DAYS) continue; // same 7-day window as the in-memory scoreCandidate path
+    }
+    candidates.push({
+      pageId: entry.page_id,
+      title: notionPageTitle(page),
+      url: entry.url || page.url,
+      entity_id: entry.entity_id,
+      reason: `shared tags [${shared.join(", ")}] (via dedup index)`,
+    });
+  }
+  return candidates;
+}
 
 // Searches Notion for plausible candidates and scores them against the new
-// page. Runs one search per "anchor" -- the identifier's repo name (if any)
-// plus up to MAX_TAG_QUERIES of the new page's own tags -- and merges the
-// results, deduped by page ID, before scoring.
-//
-// FIX (2026-07-21, live-test bug): originally only searched on the
-// identifier's repo name, which meant Signal 3 (tag overlap) could only
-// ever fire as an accidental side effect of that search also surfacing a
-// tag-sharing page for unrelated reasons -- a candidate under a different
-// repo/identifier had no path into the pool at all, even with 2+ shared
-// tags. The tag-anchored queries below give it one.
+// page. Signals 1/2 (identifier overlap, cross-reference) run via
+// notion_search on the identifier's repo name -- unchanged, and confirmed
+// working live for both title-adjacency and body-only cross-reference
+// cases. Signal 3 (tag overlap) runs separately via findTagOverlapCandidates
+// above, reading the dedup index directly instead of notion_search, since a
+// tag-overlapping page may share no identifier at all with the new page.
 //
 // If the new page has neither an identifier nor any tags, there's nothing
 // deterministic to search on -- notion_search would just return keyword
@@ -152,60 +232,60 @@ export async function findLinkCandidates({ title, content }) {
   const newTags  = extractTags(content || "");
   if (!idTokens.length && !newTags.size) return { strong: [], medium: [] };
 
-  const queries = [];
+  const strong = [];
+  const medium = [];
+  const seenPageIds = new Set();
+  const nowIso = new Date().toISOString();
+
   if (idTokens.length) {
     // Repo name is the most specific short deterministic query we can build
     // from an identifier -- Notion's search is keyword-based and a full
     // sentence dilutes relevance.
     const [primaryRepo] = idTokens[0].split("#");
-    queries.push(primaryRepo);
-  }
-  for (const tag of [...newTags].slice(0, MAX_TAG_QUERIES)) {
-    queries.push(tag);
-  }
-
-  const seenPageIds = new Set();
-  const hits = [];
-  for (const q of queries) {
-    let searchData;
+    let searchData = { results: [] };
     try {
       searchData = await notionRequest("/search", {
         method: "POST",
-        body: { query: q, page_size: MAX_CANDIDATES_TO_SCORE },
+        body: { query: primaryRepo, page_size: MAX_CANDIDATES_TO_SCORE },
       });
     } catch {
-      // This query failed -- try the remaining anchors rather than aborting
-      // the whole candidate search over one bad call.
-      continue;
+      // Search unreachable -- fall through with no identifier-based
+      // candidates rather than aborting the whole create.
     }
     for (const hit of searchData.results || []) {
       if (hit.object !== "page" || seenPageIds.has(hit.id)) continue;
       seenPageIds.add(hit.id);
-      hits.push(hit);
+      let candContent = "", candMarkers = {};
+      try {
+        const blocksData = await notionRequest(`/blocks/${hit.id}/children?page_size=100`);
+        const blocks = blocksData.results || [];
+        candContent = notionBlocksToText(blocks);
+        candMarkers = parseMarkers(blocks);
+      } catch {
+        continue; // unreadable candidate (archived/permissions) -- skip, don't fail the create
+      }
+      const candTitle = notionPageTitle(hit);
+      const { tier, reason } = scoreCandidate(
+        { title, content, tags: newTags, createdAt: nowIso },
+        { title: candTitle, content: candContent, createdAt: hit.created_time }
+      );
+      const entryObj = { pageId: hit.id, title: candTitle, url: hit.url, entity_id: candMarkers.entity_id || null, reason };
+      if (tier === "strong") strong.push(entryObj);
+      else if (tier === "medium") medium.push(entryObj);
     }
   }
-  if (!hits.length) return { strong: [], medium: [] };
 
-  const strong = [];
-  const medium = [];
-  for (const hit of hits) {
-    let candContent = "", candMarkers = {};
-    try {
-      const blocksData = await notionRequest(`/blocks/${hit.id}/children?page_size=100`);
-      const blocks = blocksData.results || [];
-      candContent = notionBlocksToText(blocks);
-      candMarkers = parseMarkers(blocks);
-    } catch {
-      continue; // unreadable candidate (archived/permissions) -- skip, don't fail the create
+  // Signal 3, structural fix -- see findTagOverlapCandidates above.
+  try {
+    const tagMatches = await findTagOverlapCandidates({ tags: newTags, createdAt: nowIso });
+    for (const c of tagMatches) {
+      if (seenPageIds.has(c.pageId)) continue;
+      seenPageIds.add(c.pageId);
+      medium.push(c);
     }
-    const candTitle = notionPageTitle(hit);
-    const { tier, reason } = scoreCandidate(
-      { title, content, tags: newTags, createdAt: new Date().toISOString() },
-      { title: candTitle, content: candContent, createdAt: hit.created_time }
-    );
-    const entry = { pageId: hit.id, title: candTitle, url: hit.url, entity_id: candMarkers.entity_id || null, reason };
-    if (tier === "strong") strong.push(entry);
-    else if (tier === "medium") medium.push(entry);
+  } catch {
+    // swallow -- best-effort, mirrors the rest of this function
   }
+
   return { strong, medium };
 }
