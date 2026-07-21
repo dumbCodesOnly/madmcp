@@ -150,7 +150,7 @@ export async function doCreatePage({ parent_id, parent_type, title, content, ent
   if (entity_id) {
     indexError = await appendIndexEntry({ entity_id, page_id: data.id, url: data.url });
   }
-  return { skipped: false, id: data.id, url: data.url, title, markerCount: markerBlocks.length, relationCount: relationBlocks.length, entity_id, status, indexError };
+  return { skipped: false, id: data.id, url: data.url, title, markerCount: markerBlocks.length, relationCount: relationBlocks.length, entity_id, status, indexError, linkCandidates, autoRelations };
 }
 
 // Sequential batch runner, mimicking Promise.allSettled's per-item
@@ -492,7 +492,13 @@ export function register(server) {
         ? `\n\n\u26a0\ufe0f Page created, but recording it in the dedup index failed: ${result.indexError}. Future notion_create_page calls with entity_id "${entity_id}" may not detect this page as a duplicate.`
         : "";
       const markerNote = result.markerCount ? ` (with ${entity_id ? "entity_id" : ""}${entity_id && status ? " + " : ""}${status ? "status" : ""} marker${result.markerCount > 1 ? "s" : ""})` : "";
-      return { content: [{ type: "text", text: `Created Notion page "${title}"${markerNote}\nID: ${result.id}\nURL: ${result.url}${indexNote}` }] };
+      const autoLinkNote = result.autoRelations?.length
+        ? `\n\n\ud83d\udd17 Auto-linked (identifier/cross-reference match): ${result.autoRelations.map((r) => r.to_entity_id).join(", ")}`
+        : "";
+      const candidateNote = result.linkCandidates?.medium?.length
+        ? `\n\n\ud83e\udd14 Possible related page(s) (tag overlap, not auto-linked): ${result.linkCandidates.medium.map((c) => `"${c.title}" (${c.url})`).join("; ")}`
+        : "";
+      return { content: [{ type: "text", text: `Created Notion page "${title}"${markerNote}\nID: ${result.id}\nURL: ${result.url}${indexNote}${autoLinkNote}${candidateNote}` }] };
     }
   );
 
