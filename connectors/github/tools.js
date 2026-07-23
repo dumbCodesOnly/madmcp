@@ -14,6 +14,7 @@ import { register as registerReleases  } from "./releases.js";
 import { register as registerRepo      } from "./repo.js";
 import { register as registerSearch    } from "./search.js";
 import { register as registerActions   } from "./actions.js";
+import { register as registerCiControl } from "./ci_control.js";
 import { register as registerStrReplace} from "./str_replace.js";
 import { register as registerDiff      } from "./diff.js";
 import { register as registerRepoMgmt } from "./repo_mgmt.js";
@@ -28,6 +29,7 @@ export function register(server) {
   registerRepo(server);
   registerSearch(server);
   registerActions(server);
+  registerCiControl(server);
   registerStrReplace(server);
   registerDiff(server);
   registerRepoMgmt(server);
