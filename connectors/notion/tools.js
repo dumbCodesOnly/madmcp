@@ -608,6 +608,55 @@ export function register(server) {
   );
 
   server.tool(
+    "notion_get_database",
+    "Get a Notion database's schema (title and property definitions) and basic info. Use this before notion_query_database or before notion_create_page with parent_type: 'database', to see what properties are available and their types.",
+    {
+      database_id: z.string().describe("Notion database ID (UUID format, e.g. from notion_search with filter_type: 'database')"),
+    },
+    async ({ database_id }) => {
+      const data = await notionRequest(`/databases/${database_id}`);
+      const title = notionDatabaseTitle(data);
+      const propLines = Object.entries(data.properties || {}).map(([name, def]) => `  ${name}: ${def.type}`);
+      const text = `# ${title}\nID: ${data.id}\nURL: ${data.url}\nCreated: ${data.created_time?.slice(0, 10)} | Last edited: ${data.last_edited_time?.slice(0, 10)}\n\nProperties:\n${propLines.join("\n") || "(none)"}`;
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  server.tool(
+    "notion_query_database",
+    "Query rows from a Notion database, with an optional filter. Returns each row's properties in readable form. Call notion_get_database first to see available property names/types for building a filter.",
+    {
+      database_id: z.string().describe("Notion database ID"),
+      filter:      z.record(z.any()).optional().describe("Optional Notion filter object, e.g. { property: 'EntityId', rich_text: { equals: 'some-id' } }"),
+      page_size:   z.number().optional().describe("Number of rows to return (default 20, max 100)"),
+      cursor:      z.string().optional().describe("Pagination cursor from a previous call's next_cursor, to fetch the next page of rows"),
+    },
+    async ({ database_id, filter, page_size = 20, cursor }) => {
+      const body = { page_size };
+      if (filter) body.filter = filter;
+      if (cursor) body.start_cursor = cursor;
+      const data = await notionRequest(`/databases/${database_id}/query`, { method: "POST", body });
+      if (!data.results?.length) return { content: [{ type: "text", text: "No rows found." }] };
+      const displayProp = (val) => {
+        if (val.type === "title") return notionRichTextToString(val.title);
+        if (val.type === "rich_text") return notionRichTextToString(val.rich_text);
+        if (val.type === "url") return val.url || "";
+        if (val.type === "select") return val.select?.name || "";
+        if (val.type === "multi_select") return (val.multi_select || []).map((s) => s.name).join(",");
+        if (val.type === "checkbox") return val.checkbox ? "true" : "false";
+        if (val.type === "number") return String(val.number ?? "");
+        return JSON.stringify(val[val.type] ?? "");
+      };
+      const lines = data.results.map((row) => {
+        const props = Object.entries(row.properties || {}).map(([name, val]) => `${name}: ${displayProp(val)}`).join(" | ");
+        return `- ${props}\n  (row id: ${row.id})`;
+      });
+      const hasMore = data.has_more ? `\n\n\u26a0\ufe0f More rows exist -- call again with cursor: "${data.next_cursor}" to see the next page.` : "";
+      return { content: [{ type: "text", text: lines.join("\n") + hasMore }] };
+    }
+  );
+
+  server.tool(
     "notion_update_database",
     "Update a Notion database's title, or archive/restore it. Use this instead of notion_update_page for database IDs -- databases live at a separate API endpoint from pages, so notion_update_page returns a 404 if given a database ID.",
     {
