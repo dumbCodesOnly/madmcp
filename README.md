@@ -195,7 +195,6 @@ All tokens are optional independently — a connector's tools fail at call time
 | `GITHUB_MAX_RETRIES` | Max retries on GitHub secondary-rate-limit/429 responses (default `3`) |
 | `GITHUB_RETRY_BASE_MS` | Fallback backoff base when GitHub omits `Retry-After` (default `1500`, doubles per retry) |
 | `NOTION_INDEX_DATABASE_ID` | Database used for entity_id → page_id dedup lookups (has a working default) |
-| `NOTION_INDEX_PAGE_ID` | Legacy page-based dedup index, superseded by `NOTION_INDEX_DATABASE_ID`. The migration tool that read this has been removed; still referenced by `linking.js` and `sync/mem0_notion.js` -- the underlying Notion page was archived 2026-07-24, so those call sites need a follow-up look (has a working default, but that default now points at an archived page) |
 | `NOTION_SYNC_PARENT_PAGE_ID` | Parent page for pages created by `sync_mem0_to_notion` (has a working default) |
 | `MCP_SHARED_KEY` | Shared-secret auth for `/mcp`. Unset = endpoint is open to anyone with the URL — set this in any real deployment. |
 | `IP_ALLOWLIST_ENABLED` | Set `false` to disable the IP allowlist (default: enabled) |
