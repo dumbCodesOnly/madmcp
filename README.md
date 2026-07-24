@@ -158,8 +158,10 @@ Observability: `cf_workers_observability_query/keys/values/compare`
 
 ### Notion
 `notion_search`, `notion_list`, `notion_get_page`, `notion_get_page_history`, `notion_create_page`,
-`notion_create_pages_batch`, `notion_create_database`, `notion_update_page`, `notion_update_pages_batch`,
-`notion_update_database`, `notion_sync_content`
+`notion_create_pages_batch`, `notion_create_database`, `notion_get_database`, `notion_query_database`,
+`notion_update_page`, `notion_update_pages_batch`, `notion_update_database`, `notion_sync_content`,
+`notion_migrate_entity_index` (one-time, idempotent -- copies old page-based entity_id index entries
+into the Entity Index database; safe to re-run)
 
 ### Mem0
 `mem0_add`, `mem0_add_batch`, `mem0_get`, `mem0_get_history`, `mem0_list`, `mem0_search`,
@@ -194,7 +196,8 @@ All tokens are optional independently — a connector's tools fail at call time
 | `GITHUB_MIN_REQUEST_INTERVAL_MS` | Minimum spacing between outgoing GitHub REST requests, to avoid secondary rate limits (default `300`) |
 | `GITHUB_MAX_RETRIES` | Max retries on GitHub secondary-rate-limit/429 responses (default `3`) |
 | `GITHUB_RETRY_BASE_MS` | Fallback backoff base when GitHub omits `Retry-After` (default `1500`, doubles per retry) |
-| `NOTION_INDEX_PAGE_ID` | Page used for entity_id → page_id dedup lookups (has a working default) |
+| `NOTION_INDEX_DATABASE_ID` | Database used for entity_id → page_id dedup lookups (has a working default) |
+| `NOTION_INDEX_PAGE_ID` | Legacy page-based dedup index, superseded by `NOTION_INDEX_DATABASE_ID` -- only still read by the one-time `notion_migrate_entity_index` tool (has a working default) |
 | `NOTION_SYNC_PARENT_PAGE_ID` | Parent page for pages created by `sync_mem0_to_notion` (has a working default) |
 | `MCP_SHARED_KEY` | Shared-secret auth for `/mcp`. Unset = endpoint is open to anyone with the URL — set this in any real deployment. |
 | `IP_ALLOWLIST_ENABLED` | Set `false` to disable the IP allowlist (default: enabled) |
