@@ -395,6 +395,19 @@ export async function doUpdatePage({ page_id, title, append_content, archived, r
 export function register(server) {
 
   server.tool(
+    "notion_migrate_entity_index",
+    "One-time (idempotent) migration tool: copies entity_id index entries from the old page-based index into the Entity Index database (NOTION_INDEX_DATABASE_ID). Safe to re-run -- entries already present in the database are skipped, not duplicated. Run this once after the database-backed dedup lookup is deployed; not needed for normal operation afterward.",
+    {},
+    async () => {
+      const result = await migrateEntityIndexToDatabase();
+      const lines = result.results.map((r) => (r.status === "error" ? `\u2717 ${r.entity_id} \u2014 ${r.error}` : `\u2713 ${r.entity_id} \u2014 ${r.status}`));
+      const moreNote = result.hasMore ? "\n\n\u26a0\ufe0f Old index page has more than 100 blocks -- run again to migrate the rest (this call only scanned the first page)." : "";
+      const summary = `Scanned ${result.totalFoundOnOldPage} entries on the old index page.\n\n${lines.join("\n") || "(none found)"}${moreNote}`;
+      return { content: [{ type: "text", text: summary }] };
+    }
+  );
+
+  server.tool(
     "notion_search",
     "Search pages and databases in your Notion workspace.",
     {
