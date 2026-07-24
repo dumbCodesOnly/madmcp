@@ -7,10 +7,10 @@
 // the mem0->Notion Memory Index (sync/mem0_notion.js output), but scope was
 // corrected -- Notion tooling is meant to become independent of mem0. This
 // module uses ONLY notion_search + page content already reachable via
-// existing Notion API calls (notionRequest), plus the dedup index page
-// (NOTION_INDEX_PAGE_ID) for Signal 3 -- see the structural-fix comment on
-// findTagOverlapCandidates below. No mem0 read, no LLM call, no external API
-// key. See Notion plan page (entity_id: plan-notion-autolink-heuristic) for
+// existing Notion API calls (notionRequest), plus the Entity Index database
+// (NOTION_INDEX_DATABASE_ID, via queryAllIndexEntries) for Signal 3 -- see
+// the structural-fix comment on findTagOverlapCandidates below. No mem0
+// read, no LLM call, no external API key. See Notion plan page (entity_id: plan-notion-autolink-heuristic) for
 // the full writeup and tradeoffs.
 //
 // KNOWN LIMITATION: purely syntactic, no semantic/conceptual matching. Will
@@ -20,8 +20,7 @@
 // plan page for the "workers-sdk RPC leak wouldn't have been caught" example.
 // ---------------------------------------------------------------------------
 
-import { notionRequest, notionPageTitle, notionBlocksToText, parseMarkers, notionRichTextToString, parseIndexEntryText } from "./client.js";
-import { NOTION_INDEX_PAGE_ID } from "../../config.js";
+import { notionRequest, notionPageTitle, notionBlocksToText, parseMarkers, queryAllIndexEntries } from "./client.js";
 
 const STOPWORDS = new Set([
   "the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "with",
@@ -152,13 +151,17 @@ const TAG_OVERLAP_WINDOW_DAYS = 7;
 // FIX: reuse this codebase's existing precedent for the exact same class of
 // problem -- findPageByEntityId (tools.js) already solved "notion_search has
 // real lag / doesn't reliably find things" for entity_id dedup by
-// maintaining a dedicated index page (NOTION_INDEX_PAGE_ID) whose blocks are
-// read directly via /blocks/{id}/children -- a direct, uncached read, not
-// subject to search-indexing lag or title-only matching. Signal 3 gets the
-// same fix: index entries now carry each tracked page's tags (see
-// buildIndexEntryText/parseIndexEntryText in client.js), so tag-overlap
-// discovery reads the index directly instead of calling notion_search at
-// all.
+// maintaining a dedicated index, read directly rather than searched. Signal
+// 3 gets the same fix: index entries carry each tracked page's tags, so
+// tag-overlap discovery reads the index directly instead of calling
+// notion_search at all.
+//
+// UPDATE (2026-07-24): the index itself moved from a page (read via
+// /blocks/{id}/children, capped at ~100 blocks) to a real database (read via
+// queryAllIndexEntries in client.js, not subject to that cap) -- see
+// config.js's NOTION_INDEX_DATABASE_ID comment. This function was updated to
+// match; the underlying fix rationale above (direct read, not search) is
+// unchanged.
 //
 // SCOPE LIMIT (accepted tradeoff): this only makes tag overlap discoverable
 // for entity_id-tracked pages, since only those get an index entry at all.
@@ -169,10 +172,9 @@ const TAG_OVERLAP_WINDOW_DAYS = 7;
 export async function findTagOverlapCandidates({ tags, createdAt }) {
   if (!tags || !tags.size) return [];
 
-  let indexBlocks;
+  let indexEntries;
   try {
-    const data = await notionRequest(`/blocks/${NOTION_INDEX_PAGE_ID}/children?page_size=100`);
-    indexBlocks = data.results || [];
+    indexEntries = await queryAllIndexEntries();
   } catch {
     // Best-effort, same as the rest of findLinkCandidates -- an unreachable
     // index shouldn't block page creation, it just means Signal 3 finds
@@ -181,10 +183,8 @@ export async function findTagOverlapCandidates({ tags, createdAt }) {
   }
 
   const overlapping = [];
-  for (const b of indexBlocks) {
-    if (b.type !== "paragraph") continue;
-    const entry = parseIndexEntryText(notionRichTextToString(b.paragraph?.rich_text || []));
-    if (!entry || !entry.tags.length) continue;
+  for (const entry of indexEntries) {
+    if (!entry.tags.length) continue;
     const shared = entry.tags.filter((t) => tags.has(t));
     if (shared.length >= 2) overlapping.push({ entry, shared });
   }
