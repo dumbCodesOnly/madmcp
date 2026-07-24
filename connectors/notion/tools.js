@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { z } from "zod";
-import { NOTION_INDEX_PAGE_ID } from "../../config.js";
+import { NOTION_INDEX_DATABASE_ID } from "../../config.js";
 import {
   notionRequest, notionPageTitle, notionDatabaseTitle, notionRichTextToString,
   notionBlocksToText, buildMarkerBlocks, statusMarkerBlock, notionBlockPlainText, parseMarkers,
@@ -16,69 +16,75 @@ import { findLinkCandidates, extractTags, findTagOverlapCandidates } from "./lin
 const STATUS_VALUES = ["open", "resolved", "superseded"];
 
 // ---------------------------------------------------------------------------
-// Dedup/upsert lookup (2026-07-17, gap #1 -- see mem0 entity_id:
-// madmcp-notion-connector-gaps-roadmap).
+// Dedup/upsert lookup (2026-07-17, gap #1; database rewrite 2026-07-24 --
+// see mem0 entity_id: madmcp-notion-connector-gaps-roadmap).
 //
-// REAL FIX 2026-07-17: the original implementation leaned on notion_search
+// FIRST FIX 2026-07-17: the original implementation leaned on notion_search
 // to find candidate pages by entity_id text. Live testing confirmed that's
 // fundamentally broken -- Notion's search index has real lag, and searching
 // for an entity_id string immediately after creating that page (the most
-// common dedup scenario -- "just created something, now checking if it
-// exists") reliably returns zero results. The dedup check was coded
-// correctly but the data source it depended on couldn't answer fast enough,
-// so duplicates were still created.
+// common dedup scenario) reliably returns zero results. Fixed by reading a
+// dedicated index page's own blocks directly (uncached, no search lag).
 //
-// Fix: maintain a dedicated index page (NOTION_INDEX_PAGE_ID, config.js)
-// whose blocks are plain "entity_id | page_id | url" paragraph entries.
-// Reading a page's own blocks via /blocks/{id}/children is a direct,
-// uncached read -- not subject to search-indexing lag -- so this is
-// immediately consistent even right after an entry is appended. Mirrors how
-// mem0 itself does real indexed lookups rather than full-text search.
+// SECOND FIX 2026-07-24: the page-based index inherited a new gap it
+// documented at the time -- /blocks/{id}/children pagination caps a single
+// page's readable blocks at 100, so an index page with more than ~100
+// tracked entities would silently stop finding older entries. A real Notion
+// database queried via /databases/{id}/query with a filter on EntityId is
+// just as immediately-consistent (no search-index lag either way, since
+// this never goes through notion_search) but isn't bound by that 100-block
+// limit -- database queries paginate independently of page block counts.
 export async function findPageByEntityId(entity_id) {
-  let indexBlocks;
+  let rows;
   try {
-    const data = await notionRequest(`/blocks/${NOTION_INDEX_PAGE_ID}/children?page_size=100`);
-    indexBlocks = data.results || [];
+    const data = await notionRequest(`/databases/${NOTION_INDEX_DATABASE_ID}/query`, {
+      method: "POST",
+      body: { filter: { property: "EntityId", rich_text: { equals: entity_id } }, page_size: 1 },
+    });
+    rows = data.results || [];
   } catch (err) {
     // Fail loudly rather than silently falling back to nothing found --
     // silently treating "index unreachable" as "no duplicate exists" would
     // just reintroduce the exact bug this fix is for.
-    throw new Error(`Notion entity index page (${NOTION_INDEX_PAGE_ID}) is unreachable, so entity_id dedup can't be verified: ${err.message}. Fix NOTION_INDEX_PAGE_ID / the index page's sharing settings before creating entity-tracked pages.`);
+    throw new Error(`Notion entity index database (${NOTION_INDEX_DATABASE_ID}) is unreachable, so entity_id dedup can't be verified: ${err.message}. Fix NOTION_INDEX_DATABASE_ID / the database's sharing settings before creating entity-tracked pages.`);
   }
-  for (const b of indexBlocks) {
-    if (b.type !== "paragraph") continue;
-    const entry = parseIndexEntryText(notionRichTextToString(b.paragraph?.rich_text || []));
-    if (!entry || entry.entity_id !== entity_id) continue;
-    try {
-      const page = await notionRequest(`/pages/${entry.page_id}`);
-      const blocksData = await notionRequest(`/blocks/${entry.page_id}/children?page_size=20`);
-      const markers = parseMarkers(blocksData.results || []);
-      return { pageId: entry.page_id, title: notionPageTitle(page), url: page.url, markers };
-    } catch {
-      // Stale index entry (target page deleted/archived outside these
-      // tools) -- treat as not-found so a fresh page can be created, rather
-      // than erroring out on a dangling reference.
-      continue;
-    }
+  if (!rows.length) return null;
+  const row = rows[0];
+  const page_id = notionRichTextToString(row.properties?.PageId?.rich_text || []);
+  if (!page_id) return null;
+  try {
+    const page = await notionRequest(`/pages/${page_id}`);
+    const blocksData = await notionRequest(`/blocks/${page_id}/children?page_size=20`);
+    const markers = parseMarkers(blocksData.results || []);
+    return { pageId: page_id, title: notionPageTitle(page), url: page.url, markers };
+  } catch {
+    // Stale index row (target page deleted/archived outside these tools) --
+    // treat as not-found so a fresh page can be created, rather than
+    // erroring out on a dangling reference.
+    return null;
   }
-  return null;
 }
 
-// Records a new entity_id -> page_id mapping on the index page. Best-effort:
-// if this fails, the page itself was still created successfully, so we
-// don't throw -- but the caller surfaces the failure in its response text
-// since it means the NEXT dedup check for this entity_id won't find it.
-// NOTE: like notion_get_page, this index page is capped at reading/writing
-// within Notion's block-children pagination -- same first-100 limitation as
-// gap #8, not yet fixed here.
+// Records a new entity_id -> page_id mapping as a row in the Entity Index
+// database. Best-effort: if this fails, the page itself was still created
+// successfully, so we don't throw -- but the caller surfaces the failure in
+// its response text since it means the NEXT dedup check for this entity_id
+// won't find it. Unlike the old page-based index, this has no pagination
+// gap -- database rows aren't capped the way a single page's blocks are.
 async function appendIndexEntry({ entity_id, page_id, url, tags }) {
   try {
-    await notionRequest(`/blocks/${NOTION_INDEX_PAGE_ID}/children`, {
-      method: "PATCH",
-      body: { children: [{
-        object: "block", type: "paragraph",
-        paragraph: { rich_text: [{ type: "text", text: { content: buildIndexEntryText({ entity_id, page_id, url, tags }) } }] },
-      }] },
+    await notionRequest("/pages", {
+      method: "POST",
+      body: {
+        parent: { database_id: NOTION_INDEX_DATABASE_ID },
+        properties: {
+          Name:     { title: [{ text: { content: entity_id } }] },
+          EntityId: { rich_text: [{ text: { content: entity_id } }] },
+          PageId:   { rich_text: [{ text: { content: page_id } }] },
+          Url:      { url: url || null },
+          Tags:     { rich_text: [{ text: { content: (tags || []).join(",") } }] },
+        },
+      },
     });
     return null;
   } catch (err) {
