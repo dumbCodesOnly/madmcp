@@ -51,7 +51,7 @@ export const NOTION_INDEX_PAGE_ID = process.env.NOTION_INDEX_PAGE_ID || "3a04557
 // actual filter target), PageId (rich_text), Url (url), Tags (rich_text,
 // comma-separated). Override via env var if this database is ever
 // moved/recreated.
-export const NOTION_INDEX_DATABASE_ID = process.env.NOTION_INDEX_DATABASE_ID || "3a745572-b580-81c5-ba39-d9ac4d6c9c26";
+export const NOTION_INDEX_DATABASE_ID = process.env.NOTION_INDEX_DATABASE_ID || "3a745572-b580-8160-856b-cf6544c8ffa8";
 
 // Parent page for new pages created by sync_mem0_to_notion (connectors/sync/
 // mem0_notion.js). Defaults to the "Memory Index" page (id below) that the
