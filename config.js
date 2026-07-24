@@ -29,18 +29,29 @@ export const NOTION_TOKEN   = process.env.NOTION_TOKEN;
 export const NOTION_API     = "https://api.notion.com/v1";
 export const NOTION_VERSION = "2022-06-28";
 
-// Dedicated index page used for entity_id -> page_id dedup lookups (2026-07-17
-// real fix for gap #1, see mem0 entity_id: madmcp-notion-connector-gaps-roadmap).
-// notion_search has real indexing lag -- searching for an entity_id string
-// immediately after creating that page can return zero results, which let
-// duplicates through despite the dedup check being coded correctly. Reading
-// a page's own blocks via /blocks/{id}/children is a direct, uncached read
-// with no such lag, so entity_id -> page_id mappings are stored as plain
-// paragraph blocks on one well-known page instead of being looked up via
-// search. Default points at a page created 2026-07-17 under the "Claude"
-// page (id 3a045572-b580-8007-b622-c120958557bf) for this purpose; override
-// via env var if that page is ever moved/recreated.
+// Dedicated index DATABASE used for entity_id -> page_id dedup lookups.
+// SUPERSEDES the original page-based index (2026-07-17 fix for gap #1, see
+// mem0 entity_id: madmcp-notion-connector-gaps-roadmap): that fix solved the
+// notion_search indexing-lag problem by reading a page's own blocks directly
+// (uncached, no lag) instead of searching -- but inherited a NEW gap it
+// documented at the time: page block reads are capped at 100 blocks per
+// page (Notion's /blocks/{id}/children pagination), so an index page with
+// more than ~100 tracked entities would silently stop finding older entries.
+// REAL FIX (2026-07-24): a Notion database queried via /databases/{id}/query
+// with a filter on EntityId is just as immediately-consistent as the direct
+// block read (no search-index lag either way, since it's not going through
+// notion_search) but is NOT subject to the 100-block-page limit -- database
+// queries paginate independently of any single page's block count. Old page
+// ID retained below only for the one-time migration of existing entries
+// into database rows; new dedup lookups/writes use NOTION_INDEX_DATABASE_ID.
 export const NOTION_INDEX_PAGE_ID = process.env.NOTION_INDEX_PAGE_ID || "3a045572-b580-81a4-80e8-c9e5460520a6";
+// Entity Index database, created 2026-07-24 under the "Claude" page (id
+// 3a045572-b580-8007-b622-c120958557bf). Properties: Name (title, holds the
+// entity_id for readability in the Notion UI), EntityId (rich_text, the
+// actual filter target), PageId (rich_text), Url (url), Tags (rich_text,
+// comma-separated). Override via env var if this database is ever
+// moved/recreated.
+export const NOTION_INDEX_DATABASE_ID = process.env.NOTION_INDEX_DATABASE_ID || "3a745572-b580-81c5-ba39-d9ac4d6c9c26";
 
 // Parent page for new pages created by sync_mem0_to_notion (connectors/sync/
 // mem0_notion.js). Defaults to the "Memory Index" page (id below) that the
