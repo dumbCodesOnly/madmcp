@@ -5,9 +5,9 @@
 
 import { z } from "zod";
 import { mem0Request } from "../mem/client.js";
-import { notionRequest, parseIndexEntryText, notionRichTextToString, parseRelationBlocks } from "../notion/client.js";
+import { notionRequest, parseRelationBlocks, queryAllIndexEntries } from "../notion/client.js";
 import { findPageByEntityId, doCreatePage, doUpdatePage, replaceSyncedRange } from "../notion/tools.js";
-import { MEM0_USER_ID, NOTION_INDEX_PAGE_ID, NOTION_SYNC_PARENT_PAGE_ID } from "../../config.js";
+import { MEM0_USER_ID, NOTION_SYNC_PARENT_PAGE_ID } from "../../config.js";
 
 const MEM0_ENTITY_PREFIX = "mem0:";
 
@@ -74,23 +74,19 @@ async function listAllMemories({ user_id, entity_ids }) {
   return all;
 }
 
-// Reads every mem0:-prefixed entry off the shared dedup index page (see
-// notion/client.js's index-entry convention) -- the set of Notion pages
-// this sync tool has ever created. Used only for hard-deletion detection
-// (an entity_id present here but no longer in mem0's current memory set).
-// Same first-100-blocks-per-page-read caveat as everywhere else this index
-// is read; a workspace with >100 synced entities would need pagination
-// added here to stay accurate.
+// Reads every mem0:-prefixed entry off the Entity Index database (see
+// notion/client.js's queryAllIndexEntries) -- the set of Notion pages this
+// sync tool has ever created. Used only for hard-deletion detection (an
+// entity_id present here but no longer in mem0's current memory set).
+// UPDATE (2026-07-24): previously read blocks directly off the old
+// page-based index (NOTION_INDEX_PAGE_ID); moved to the database read now
+// that all index writes go there -- reading the old page here would have
+// silently gone stale (no new entries were being written to it) and broke
+// outright once that page was archived. Same 10-page/100-row-per-page
+// pagination ceiling as listAllMemories above.
 async function readSyncedIndexEntries() {
-  const data = await notionRequest(`/blocks/${NOTION_INDEX_PAGE_ID}/children?page_size=100`);
-  const blocks = data.results || [];
-  const entries = [];
-  for (const b of blocks) {
-    if (b.type !== "paragraph") continue;
-    const entry = parseIndexEntryText(notionRichTextToString(b.paragraph?.rich_text || []));
-    if (entry?.entity_id?.startsWith(MEM0_ENTITY_PREFIX)) entries.push(entry);
-  }
-  return entries;
+  const entries = await queryAllIndexEntries();
+  return entries.filter((e) => e.entity_id?.startsWith(MEM0_ENTITY_PREFIX));
 }
 
 async function syncOneMemory(memory, { dry_run }) {
