@@ -3,13 +3,14 @@
 // ---------------------------------------------------------------------------
 
 import { z } from "zod";
-import { NOTION_INDEX_DATABASE_ID } from "../../config.js";
+import { NOTION_INDEX_DATABASE_ID, NOTION_INDEX_PAGE_ID } from "../../config.js";
 import {
   notionRequest, notionPageTitle, notionDatabaseTitle, notionRichTextToString,
   notionBlocksToText, buildMarkerBlocks, statusMarkerBlock, notionBlockPlainText, parseMarkers,
   buildChangelogEntryText, isChangelogEntryText,
   buildRelationBlocks, parseRelationBlocks,
   buildSyncStartText, buildSyncRangeBlocks, findSyncRange, textBlock,
+  parseIndexEntryText,
 } from "./client.js";
 import { findLinkCandidates, extractTags, findTagOverlapCandidates } from "./linking.js";
 
@@ -181,6 +182,34 @@ async function runSequentially(items, fn) {
     }
   }
   return results;
+}
+
+// ---------------------------------------------------------------------------
+// One-time migration (2026-07-24): copies entries from the old page-based
+// index (NOTION_INDEX_PAGE_ID, read fresh here) into the Entity Index
+// database (NOTION_INDEX_DATABASE_ID). Reuses appendIndexEntry unchanged, so
+// migrated rows go through the exact same write path as any newly-created
+// entity_id going forward. Idempotent: each entry is checked against the
+// database via findPageByEntityId first, so re-running after a partial
+// failure only writes what is still missing, never a duplicate row.
+export async function migrateEntityIndexToDatabase() {
+  const data = await notionRequest(`/blocks/${NOTION_INDEX_PAGE_ID}/children?page_size=100`);
+  const blocks = data.results || [];
+  const entries = blocks
+    .filter((b) => b.type === "paragraph")
+    .map((b) => parseIndexEntryText(notionRichTextToString(b.paragraph?.rich_text || [])))
+    .filter(Boolean);
+  const results = [];
+  for (const entry of entries) {
+    const existing = await findPageByEntityId(entry.entity_id);
+    if (existing) {
+      results.push({ entity_id: entry.entity_id, status: "already-migrated" });
+      continue;
+    }
+    const err = await appendIndexEntry(entry);
+    results.push(err ? { entity_id: entry.entity_id, status: "error", error: err } : { entity_id: entry.entity_id, status: "migrated" });
+  }
+  return { totalFoundOnOldPage: entries.length, results, hasMore: !!data.has_more };
 }
 
 const EDITABLE_BLOCK_TYPES = ["paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item", "numbered_list_item", "to_do"];
